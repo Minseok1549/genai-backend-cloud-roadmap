@@ -1,4 +1,9 @@
 """EPL 승부 예측 API. /predict는 호출 시점마다 최신 시즌 경기를 반영해 팀 폼을 다시 계산한다."""
+import json
+import logging
+import sys
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,6 +23,21 @@ from fetch_data import ensure_all_seasons_cached
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = ROOT / "models" / "model.joblib"
 
+# 표준출력에 한 줄짜리 JSON을 찍는다 — Cloud Run/CloudWatch/Azure Monitor 등 대부분의
+# 클라우드 로깅은 컨테이너 stdout을 그대로 수집하므로, 별도 로깅 에이전트나 SDK 없이
+# 이 형태만으로 "구조화된 검색 가능한 로그"가 된다. request_id로 한 요청의 로그 여러
+# 줄을 한 번에 찾을 수 있다.
+logger = logging.getLogger("epl_predictor")
+logger.setLevel(logging.INFO)
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter("%(message)s"))
+logger.addHandler(_handler)
+logger.propagate = False
+
+
+def log_json(level: str, message: str, **fields) -> None:
+    logger.log(getattr(logging, level.upper()), json.dumps({"level": level, "message": message, **fields}, ensure_ascii=False))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -33,7 +53,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         # DB가 기동 시점에 죽어 있어도 예측 서빙 자체는 계속돼야 한다(기록 저장만 포기) —
         # DB 장애로 앱 전체가 뜨지 못하면 /health조차 응답하지 못하게 된다.
-        print(f"warning: database unavailable at startup, prediction history will not be recorded: {e}")
+        log_json("warning", "database unavailable at startup, prediction history will not be recorded", error=str(e))
         app.state.db_pool = None
 
     yield
@@ -43,6 +63,29 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    # 클라이언트나 로드밸런서가 이미 요청 ID를 붙여왔으면 그걸 그대로 잇는다(분산 추적) —
+    # 없으면 새로 발급한다. 응답 헤더에도 실어서, 호출한 쪽이 이 값을 자기 로그와
+    # 대조할 수 있게 한다.
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    request.state.request_id = request_id
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = round((time.monotonic() - start) * 1000, 1)
+    log_json(
+        "info",
+        "request completed",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+    )
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @app.exception_handler(RequestValidationError)
@@ -82,7 +125,7 @@ def predict(req: PredictRequest, request: Request):
     try:
         ensure_all_seasons_cached()
     except Exception as e:  # 외부 API가 잠깐 죽어도 서빙은 기존 캐시로 계속되게
-        print(f"warning: season cache refresh failed, using existing cache: {e}")
+        log_json("warning", "season cache refresh failed, using existing cache", request_id=request.state.request_id, error=str(e))
 
     # 캐시 갱신 이후의 실패(손상된 캐시, 파싱 오류, 모델 추론 오류 등)는 클라이언트 잘못이
     # 아니라 서버 쪽 일시 장애이므로 500이 아니라 503으로 알린다. 의도적으로 던진
@@ -118,7 +161,7 @@ def predict(req: PredictRequest, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"error: prediction pipeline failed: {e}")
+        log_json("error", "prediction pipeline failed", request_id=request.state.request_id, error=str(e))
         raise HTTPException(status_code=503, detail="예측 서비스를 일시적으로 사용할 수 없습니다")
 
     # 기록 저장은 예측 응답의 필수 조건이 아니다 — DB가 죽어 있어도(기동 시점 장애 포함,
@@ -134,7 +177,7 @@ def predict(req: PredictRequest, request: Request):
                 data_version=data_version,
             )
         except Exception as e:
-            print(f"warning: failed to save prediction record: {e}")
+            log_json("warning", "failed to save prediction record", request_id=request.state.request_id, error=str(e))
 
     return {
         "home_team": req.home_team,

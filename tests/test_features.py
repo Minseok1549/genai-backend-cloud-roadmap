@@ -3,6 +3,11 @@ from pathlib import Path
 
 import pandas as pd
 
+
+def test_ci_gating_intentional_failure():
+    """CI 게이팅 검증용 — 일부러 실패시켜 build/deploy가 스킵되는지 확인 후 되돌린다."""
+    assert False
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from features import build_features, FEATURE_NAMES  # noqa: E402
 

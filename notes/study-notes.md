@@ -336,6 +336,56 @@ DB는 비용 때문에 나중에 붙이고, 장애 재현은 사전 승인받고
 
 ---
 
+## 운영 확장 — 매일 자동 추적/예측 (Day 2 이후)
+
+**목표**: 지금까지는 "누가 호출하면 그 순간 예측"하는 구조였다. 이걸 실제
+운영 서비스답게 "매일 그날 예정된 EPL 경기를 자동으로 찾아 예측하고 기록"하는
+파이프라인으로 확장한다.
+
+**아키텍처 결정 — 왜 Cloud SQL이 아니라 GCS + Cloud Run Job인가**
+
+매일 쌓이는 예측 기록을 저장할 곳이 필요한데, 이미 Block 2에서 "DB는 비용 때문에
+보류"라고 결정한 바 있다. 이번엔 실제로 매일 뭔가를 저장해야 하므로 이 결정을
+다시 마주했는데, Cloud SQL(가장 작은 인스턴스도 상시 과금) 대신 **GCS 버킷에
+JSON 파일을 쌓는** 방식을 택했다 — 이 프로젝트 규모(하루 최대 십여 건의 작은
+JSON)에서는 GCS 무료 티어 안에서 사실상 영구히 해결된다. 상시 떠 있는 서버가
+필요 없다는 것도 중요한 차이: Cloud Run **Service**(요청이 오면 응답하는 상시
+컨테이너)가 아니라 Cloud Run **Job**(트리거되면 한 번 실행하고 끝나는 배치)을
+썼다 — 하루 한 번 몇 초 도는 작업에 상시 서비스를 쓸 이유가 없다.
+
+**아키텍처**: Cloud Scheduler(매일 06:00 UTC) → Cloud Run Job 트리거 → 그날
+UTC 날짜에 예정된 경기 조회(`data.load_fixtures_on_date`) → 기존 모델로 예측
+(`predictor.predict_match`) → 결과를 GCS에 `predictions/YYYY-MM-DD.json`으로 저장.
+
+**코드 공유 리팩터링**: `/predict` 엔드포인트(api.py)와 이 배치 작업
+(daily_predict.py)이 "팀명 검증 → 폼 계산 → 모델 추론"이라는 같은 로직을 쓴다.
+이 로직을 그대로 각자 구현하면 나중에 한쪽만 고치고 다른 쪽을 안 고치는 식으로
+어긋날 수 있어서, `predictor.py`(예측 로직)와 `logutil.py`(구조화 로그)를 공용
+모듈로 뽑아 두 진입점이 같은 함수를 호출하게 만들었다. "결과가 저장되는 곳만
+다를 뿐, 예측 자체는 API로 직접 물어봤을 때와 절대 갈라지지 않는다"는 게 이
+리팩터링의 목적.
+
+**실제로 겪은 에러 — Cloud Run Jobs를 v1 API로 트리거하려다 403**: Cloud
+Scheduler가 Cloud Run Job을 트리거하는 표준 URI 패턴을 처음에
+`https://{region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/{project}/jobs/{job}:run`
+(리전별 v1 네임스페이스 API, Cloud Run **Service**용 레거시 Knative 경로)로
+잡았는데, 실행할 때마다 403이 났다. Cloud Run **Job**은 v2 전용 리소스라 v1
+API가 애초에 이 리소스를 인식하지 못한 것 — IAM 권한 문제가 아니라 잘못된
+API 버전 경로 문제였다. `https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{job}:run`
+(전역 엔드포인트, v2 API)로 바꾸니 200으로 정상 트리거됐다. **교훈**: 인증
+오류(403/401)가 나면 권한부터 의심하기 쉬운데, 리소스 버전(v1 vs v2)이 애초에
+안 맞아서 나는 403도 있다 — 로그의 실제 응답 코드와 사용한 API 문서 버전을
+먼저 맞춰보는 게 IAM 바인딩을 계속 고치는 것보다 빠를 때가 있다.
+
+**검증**: 로컬에서 오늘 실제 5경기(콤바인 승격팀 2팀은 폼 부족으로 자동 스킵,
+로그로 기록)를 예측 → Cloud Run Job으로 실제 배포 → `gcloud run jobs execute`로
+수동 실행해 GCS에 실제 파일이 쌓이는 것 확인 → **Cloud Scheduler의 "실행" 버튼을
+직접 눌러 스케줄러 → Job → GCS 전체 경로**가 (수동 execute가 아니라) 스케줄러
+트리거 경로로도 동작하는 것까지 확인. 매일 06:00 UTC 자동 실행은 다음 스케줄
+때 그대로 검증된다.
+
+---
+
 ## 지금까지의 패턴 요약
 
 - **동시성 버그는 짐작하지 말고 재현해서 확인한다** (Day 1 블록 3에서 두 번 등장 —

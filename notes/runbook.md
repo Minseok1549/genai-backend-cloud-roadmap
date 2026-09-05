@@ -79,3 +79,41 @@ curl -sS -w "\nstatus: %{http_code}\n" https://epl-predictor-187506981041.asia-n
 **주의할 것**: 이 절차는 트래픽만 되돌릴 뿐, 문제가 된 리비전 자체를 지우지는
 않는다. 원인 분석이 끝난 뒤에는 새 코드로 정상 리비전을 다시 배포해서 문제
 리비전을 대체하는 게 정석 — 트래픽 롤백은 "일단 지혈"이지 "치료"가 아니다.
+
+---
+
+## 3. 매일 자동 예측 Job(`epl-daily-predict`) 상태 확인
+
+Cloud Scheduler(`epl-daily-predict-trigger`)가 매일 06:00 UTC에 Cloud Run Job
+(`epl-daily-predict`)을 트리거하고, 결과는 `gs://epl-predictor-daily-genai-backend/predictions/YYYY-MM-DD.json`에 쌓인다.
+
+**오늘 파일이 생겼는지 확인:**
+```bash
+gcloud storage cat gs://epl-predictor-daily-genai-backend/predictions/$(date -u +%Y-%m-%d).json
+```
+그날 EPL 경기가 없으면 파일 자체가 없는 게 정상(Job이 "오늘 경기 없음"으로
+로그만 남기고 종료).
+
+**최근 실행 이력과 성공/실패 확인:**
+```bash
+gcloud run jobs executions list --job=epl-daily-predict \
+  --region=asia-northeast3 --project=genai-backend-cloud-roadmap --limit=5
+```
+`FAILED_COUNT`가 1이면 실패 — 아래 로그로 원인 확인:
+```bash
+gcloud logging read \
+  'resource.type=cloud_run_job AND resource.labels.job_name=epl-daily-predict AND jsonPayload.level="error"' \
+  --project=genai-backend-cloud-roadmap --limit=20 \
+  --format="table(timestamp, jsonPayload.message, jsonPayload.error)"
+```
+
+**스케줄러 자체가 Job을 트리거했는지(403/401 등 인증 오류) 확인:**
+```bash
+gcloud logging read 'logName:"cloudscheduler.googleapis.com"' \
+  --project=genai-backend-cloud-roadmap --freshness=1d \
+  --format="table(timestamp, httpRequest.status, jsonPayload.@type)"
+```
+`httpRequest.status`가 200이 아니면 스케줄러→Job 트리거 자체가 실패한 것(Job
+안쪽 코드 문제가 아님) — 대상 URI가 `run.googleapis.com/v2/...:run`(v2 API)인지,
+`scheduler-invoker` 서비스 계정에 대상 Job의 `roles/run.invoker`가 붙어있는지
+확인한다.

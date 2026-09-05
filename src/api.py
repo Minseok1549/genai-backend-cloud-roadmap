@@ -1,14 +1,9 @@
 """EPL 승부 예측 API. /predict는 호출 시점마다 최신 시즌 경기를 반영해 팀 폼을 다시 계산한다."""
-import json
-import logging
-import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import joblib
-import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -17,35 +12,19 @@ from pydantic import BaseModel, Field, field_validator
 
 import db
 from data import load_matches
-from features import latest_team_form, FEATURE_NAMES
 from fetch_data import ensure_all_seasons_cached
+from logutil import log_json
+from predictor import predict_match, load_model_bundle, UnknownTeamError, InsufficientFormError
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = ROOT / "models" / "model.joblib"
 
-# 표준출력에 한 줄짜리 JSON을 찍는다 — Cloud Run/CloudWatch/Azure Monitor 등 대부분의
-# 클라우드 로깅은 컨테이너 stdout을 그대로 수집하므로, 별도 로깅 에이전트나 SDK 없이
-# 이 형태만으로 "구조화된 검색 가능한 로그"가 된다. request_id로 한 요청의 로그 여러
-# 줄을 한 번에 찾을 수 있다.
-logger = logging.getLogger("epl_predictor")
-logger.setLevel(logging.INFO)
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(logging.Formatter("%(message)s"))
-logger.addHandler(_handler)
-logger.propagate = False
-
-
-def log_json(level: str, message: str, **fields) -> None:
-    logger.log(getattr(logging, level.upper()), json.dumps({"level": level, "message": message, **fields}, ensure_ascii=False))
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.model_bundle = joblib.load(MODEL_PATH)
-    if "model_version" not in app.state.model_bundle:
-        # 예측 기록의 감사 추적이 이 값에 의존하므로, 없는 채로 조용히 "unknown"을
-        # 쓰는 것보다 기동 시점에 바로 실패하는 편이 안전하다.
-        raise RuntimeError(f"{MODEL_PATH}에 model_version이 없습니다 — train.py를 다시 실행하세요")
+    # 예측 기록의 감사 추적이 model_version에 의존하므로, 없는 채로 조용히 "unknown"을
+    # 쓰는 것보다 기동 시점에 바로 실패하는 편이 안전하다(load_model_bundle이 검증).
+    app.state.model_bundle = load_model_bundle(MODEL_PATH)
 
     try:
         app.state.db_pool = db.create_pool()
@@ -132,34 +111,13 @@ def predict(req: PredictRequest, request: Request):
     # HTTPException(알 수 없는 팀명/기록 부족 등 400)은 그대로 통과시킨다.
     try:
         matches = load_matches()
-        known_teams = set(matches["home_team"]) | set(matches["away_team"])
-        for team in (req.home_team, req.away_team):
-            if team not in known_teams:
-                raise HTTPException(status_code=400, detail=f"알 수 없는 팀명: {team}")
-
-        home_form = latest_team_form(matches, req.home_team)
-        away_form = latest_team_form(matches, req.away_team)
-        for team, form in [(req.home_team, home_form), (req.away_team, away_form)]:
-            if form is None:
-                raise HTTPException(status_code=400, detail=f"{team}의 최근 경기 기록이 부족합니다")
-
-        features = pd.DataFrame([{
-            "home_form_points": home_form["points"],
-            "home_form_gf": home_form["goals_for"],
-            "home_form_ga": home_form["goals_against"],
-            "away_form_points": away_form["points"],
-            "away_form_gf": away_form["goals_for"],
-            "away_form_ga": away_form["goals_against"],
-        }])[FEATURE_NAMES]
-
         bundle = request.app.state.model_bundle
-        proba = bundle["model"].predict_proba(features)[0]
-        probabilities = dict(zip(bundle["classes"], proba.tolist()))
+        probabilities = predict_match(req.home_team, req.away_team, matches, bundle)
         # 이 예측이 어떤 경기 데이터를 반영했는지의 스냅샷 — 실시간으로 갱신되는
         # matches를 매번 다시 읽으므로 "가장 최근 반영된 경기 날짜"로 데이터 버전을 삼는다.
         data_version = str(matches["date"].max())
-    except HTTPException:
-        raise
+    except (UnknownTeamError, InsufficientFormError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         log_json("error", "prediction pipeline failed", request_id=request.state.request_id, error=str(e))
         raise HTTPException(status_code=503, detail="예측 서비스를 일시적으로 사용할 수 없습니다")

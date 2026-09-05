@@ -42,3 +42,29 @@ def load_matches(seasons: list[int] | None = None) -> pd.DataFrame:
     columns = ["match_id", "date", "season", "home_team", "away_team", "home_goals", "away_goals", "result"]
     df = pd.DataFrame(rows, columns=columns).sort_values("date").reset_index(drop=True)
     return df
+
+
+def load_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dict]:
+    """target_date(같은 UTC 날짜)에 예정된(아직 안 끝난) 경기 목록을 반환한다.
+    FINISHED 경기를 걸러내는 load_matches()와 반대로, 여기서는 아직 안 끝난 경기만 남긴다."""
+    path = RAW_DIR / f"matches_{season}.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text())
+    target = pd.Timestamp(target_date).date()
+    fixtures = []
+    for m in data["matches"]:
+        if m["status"] == "FINISHED":
+            continue
+        kickoff = pd.Timestamp(m["utcDate"])
+        if kickoff.date() != target:
+            continue
+        fixtures.append(
+            {
+                "match_id": m["id"],
+                "kickoff_utc": m["utcDate"],
+                "home_team": m["homeTeam"]["name"],
+                "away_team": m["awayTeam"]["name"],
+            }
+        )
+    return fixtures

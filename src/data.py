@@ -44,9 +44,14 @@ def load_matches(seasons: list[int] | None = None) -> pd.DataFrame:
     return df
 
 
+UPCOMING_STATUSES = {"SCHEDULED", "TIMED"}
+
+
 def load_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dict]:
-    """target_date(같은 UTC 날짜)에 예정된(아직 안 끝난) 경기 목록을 반환한다.
-    FINISHED 경기를 걸러내는 load_matches()와 반대로, 여기서는 아직 안 끝난 경기만 남긴다."""
+    """target_date(같은 UTC 날짜)에 예정된 경기 목록을 반환한다.
+    아직 시작 전(SCHEDULED/TIMED)인 경기만 남긴다 — POSTPONED/CANCELLED/SUSPENDED는
+    "예정"이 아니라 이미 무산됐거나 불확실한 경기라 예측 대상에서 제외하고,
+    IN_PLAY/PAUSED는 이미 시작해서 사전 예측의 의미가 없으므로 제외한다."""
     path = RAW_DIR / f"matches_{season}.json"
     if not path.exists():
         return []
@@ -54,7 +59,7 @@ def load_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dic
     target = pd.Timestamp(target_date).date()
     fixtures = []
     for m in data["matches"]:
-        if m["status"] == "FINISHED":
+        if m["status"] not in UPCOMING_STATUSES:
             continue
         kickoff = pd.Timestamp(m["utcDate"])
         if kickoff.date() != target:

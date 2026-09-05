@@ -393,26 +393,39 @@ API 버전 경로 문제였다. `https://run.googleapis.com/v2/projects/{project
   프로세스 안에서 캐시 만료 시점에 두 스레드가 동시에 같은 PID로 임시 파일을
   써서 내용이 섞이거나 `os.replace` 직전에 한쪽이 지워지는 경쟁 상태가 가능했다.
   스레드 ID + uuid를 파일명에 더해 호출마다 고유하게 만들어 수정.
-- **백로그 — `daily_predict.py`의 "같은 날 재실행 시 덮어쓰기" 문제**(양쪽 다
-  지적, 세부 시나리오는 다르게 표현): 지금은 그날 예측 결과를 통째로
-  `predictions/{date}.json`에 덮어쓰는데, (a) fixture 조회가 `FINISHED`를
-  제외하므로 오후 재실행 시 이미 끝난 경기의 아침 예측이 파일에서 사라지고,
-  (b) 재실행에서 전부 스킵되거나 빈 결과가 나오면 업로드 자체를 건너뛰어
-  기존 파일이 stale한 채로 남는다 — "그날 경기 없음"과 "예측이 다 실패함"이
-  구분되지 않는다. 고치려면 최소 한 번은 "그날 최종 스냅샷"의 정의부터
-  다시 정해야 해서(덮어쓸지, append할지, 빈 목록도 명시적으로 써야 하는지)
-  이번 세션에서 바로 고치지 않고 다음 스프린트로 넘긴다.
-- **백로그 — `data.py`의 fixture 필터가 `FINISHED`만 제외**: `POSTPONED`,
+- **수정 완료 — `daily_predict.py`의 "같은 날 재실행 시 덮어쓰기" 문제**(양쪽 다
+  지적): 그날 예측 결과를 통째로 `predictions/{date}.json`에 덮어써서, 오후
+  재실행 시 이미 끝난 경기(fixture 조회에 안 잡힘)의 아침 예측이 사라지거나,
+  전부 스킵된 재실행이 기존 파일을 stale한 채로 남기는 문제가 있었다.
+  `fetch_existing_predictions` + `merge_predictions`를 추가해, 업로드 전
+  GCS에 이미 있는 그날 파일을 읽어와 match_id 기준으로 병합한다 — 겹치는
+  경기는 이번 실행 결과로 덮어쓰고, 이번 실행에 안 잡힌 경기는 기존 기록을
+  보존한다. "그날 경기가 아예 없음"과 "예측이 다 실패함"을 완벽히 구분하진
+  못하지만(둘 다 그날 첫 실행에서 빈 결과), 최소한 재실행으로 데이터가
+  사라지는 건 막았다 — 완벽한 낙관적 동시성 제어(GCS generation precondition)
+  까지는 스코프를 넘어선다고 판단해 넣지 않음.
+- **수정 완료 — `data.py`의 fixture 필터가 `FINISHED`만 제외**: `POSTPONED`,
   `CANCELLED`, `SUSPENDED` 상태 경기까지 "예정 경기"로 취급해 예측 대상에
-  포함된다. 상태 화이트리스트(`SCHEDULED`, `TIMED` 등만 포함)로 바꾸는 게 맞다.
-- **백로그(낮은 우선순위) — Codex만 지적**: `daily_predict.py`/`data.py`가
-  날짜를 전부 UTC 기준으로 다뤄서, EPL 현지일이나 사용자의 로컬 자정 근처
-  경기는 하루 어긋날 수 있다. `predictor.py`가 예측 확률을 `model_bundle`의
-  별도 `classes` 목록과 순서 매칭하며 길이·순서 검증이 없어, 번들이
-  꼬이면 조용히 잘못된 라벨에 확률이 매핑될 수 있다.
-- **백로그(낮은 우선순위) — Opus만 지적**: `features.py`가 전 시즌 로그를
-  그대로 써서, 강등된 팀도 `known_teams`를 통과해 몇 년 전 폼으로 예측이
-  나갈 수 있다.
+  포함되던 문제. `UPCOMING_STATUSES = {"SCHEDULED", "TIMED"}` 화이트리스트로
+  바꿔서, 아직 시작 전인 경기만 예측 대상에 남긴다.
+- **수정 완료 — `predictor.py`의 model_bundle 검증 부재**: 확률을 `model_bundle
+  ["classes"]`와 순서 매칭하는데 검증이 없었다. `load_model_bundle`에서
+  `bundle["model"].classes_`와 `bundle["classes"]`가 일치하는지 로드 시점에
+  확인하도록 추가 — 정상 흐름(train.py가 `model.classes_`에서 그대로 뽑아
+  저장)에서는 항상 일치하므로 회귀 없음, bundle이 손상되면 조용히 잘못된
+  라벨에 매핑되는 대신 즉시 에러로 드러난다.
+- **수정 완료 — `features.py`/`predictor.py`의 강등팀 이슈**(Opus 지적):
+  `known_teams` 체크가 전 시즌 로그를 다 뒤져서, 강등된 팀도 몇 년 전 기록으로
+  "known"이자 "최근 폼 있음" 취급됐다. `predictor.py`에 `_current_season_known_teams`
+  를 추가해, 팀 존재 여부는 (완료된 경기가 있는) 가장 최근 시즌 경기로만
+  판단하게 했다 — 새 시즌에 아직 끝난 경기가 없으면 자연히 직전 시즌이
+  선택되므로 진행 중인 팀은 계속 known으로 인식된다. `latest_team_form`의
+  폼 계산 자체는 그대로 전체 이력을 쓴다(시즌 초반 이월 폼 계산은 기존 의도).
+- **의도적으로 안 고침(낮은 우선순위) — Codex 지적**: `daily_predict.py`/
+  `data.py`가 날짜를 전부 UTC 기준으로 다룬다. Cloud Scheduler가 06:00 UTC
+  (자정과 거리가 먼 시각)에만 실행되고 EPL 경기 시각도 UTC와 가까운
+  영국 현지 시각이라, 실질적으로 자정 경계 어긋남이 발생할 조건 자체가
+  거의 없다고 판단해 코드는 그대로 두고 이 판단만 기록해둔다.
 - **문제 없음으로 확인된 것**: api.py 리팩터로 인한 에러 메시지·상태코드
   회귀 없음, `.env`는 3개 ignore 파일 모두에 있고 로그·API 응답에 시크릿
   노출 없음, db.py의 동시 저장 처리는 타당함.

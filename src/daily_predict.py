@@ -55,11 +55,32 @@ def build_daily_predictions(target_date: str) -> dict:
     }
 
 
+def _predictions_blob(target_date: str):
+    client = storage.Client()
+    return client.bucket(GCS_BUCKET).blob(f"predictions/{target_date}.json")
+
+
+def fetch_existing_predictions(target_date: str) -> dict | None:
+    blob = _predictions_blob(target_date)
+    if not blob.exists():
+        return None
+    return json.loads(blob.download_as_text())
+
+
+def merge_predictions(existing: dict | None, new_predictions: list[dict]) -> list[dict]:
+    """같은 날 여러 번 실행돼도 먼저 기록된 예측이 사라지지 않게 병합한다.
+    이번 실행에서 이미 끝나 fixture 조회에 안 잡히는 경기(오전 예측)는 기존 기록을
+    그대로 보존하고, 겹치는 경기는 이번 실행 결과로 덮어쓴다."""
+    by_id = {p["match_id"]: p for p in (existing["predictions"] if existing else [])}
+    for p in new_predictions:
+        by_id[p["match_id"]] = p
+    return list(by_id.values())
+
+
 def upload_to_gcs(payload: dict, target_date: str) -> str:
     if not GCS_BUCKET:
         raise RuntimeError("PREDICTIONS_BUCKET 환경변수가 없습니다")
-    client = storage.Client()
-    blob = client.bucket(GCS_BUCKET).blob(f"predictions/{target_date}.json")
+    blob = _predictions_blob(target_date)
     blob.upload_from_string(json.dumps(payload, ensure_ascii=False, indent=2), content_type="application/json")
     return f"gs://{GCS_BUCKET}/predictions/{target_date}.json"
 
@@ -69,12 +90,15 @@ def main() -> None:
     payload = build_daily_predictions(target_date)
     log_json("info", "daily predictions built", date=target_date, fixture_count=len(payload["predictions"]))
 
+    existing = fetch_existing_predictions(target_date) if GCS_BUCKET else None
+    payload["predictions"] = merge_predictions(existing, payload["predictions"])
+
     if not payload["predictions"]:
         log_json("info", "no fixtures scheduled today, nothing to upload", date=target_date)
         return
 
     uri = upload_to_gcs(payload, target_date)
-    log_json("info", "daily predictions uploaded", date=target_date, uri=uri)
+    log_json("info", "daily predictions uploaded", date=target_date, uri=uri, prediction_count=len(payload["predictions"]))
 
 
 if __name__ == "__main__":

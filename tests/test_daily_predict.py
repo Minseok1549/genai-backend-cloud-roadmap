@@ -22,6 +22,8 @@ def test_load_fixtures_on_date_filters_status_and_date(tmp_path, monkeypatch):
             {"id": 3, "status": "FINISHED", "utcDate": "2026-09-05T09:00:00Z",
              "homeTeam": {"name": "E"}, "awayTeam": {"name": "F"},
              "score": {"fullTime": {"home": 1, "away": 0}, "winner": "HOME_TEAM"}},
+            {"id": 4, "status": "POSTPONED", "utcDate": "2026-09-05T15:00:00Z",
+             "homeTeam": {"name": "G"}, "awayTeam": {"name": "H"}},
         ]
     }
     (tmp_path / "matches_2026.json").write_text(json.dumps(payload))
@@ -56,6 +58,31 @@ def test_build_daily_predictions_skips_failed_fixture_and_continues(monkeypatch)
     assert len(payload["predictions"]) == 1
     assert payload["predictions"][0]["match_id"] == 2
     assert payload["predictions"][0]["model_version"] == "v1"
+
+
+def test_merge_predictions_preserves_matches_missing_from_new_run():
+    """오전 실행에서 기록된 예측이, 오후 재실행 시(해당 경기가 이미 끝나 fixture 조회에
+    안 잡혀도) 사라지지 않고 그대로 남아야 한다."""
+    existing = {
+        "predictions": [
+            {"match_id": 1, "home_team": "A", "away_team": "B", "probabilities": {}},
+            {"match_id": 2, "home_team": "C", "away_team": "D", "probabilities": {}},
+        ]
+    }
+    new_predictions = [
+        {"match_id": 2, "home_team": "C", "away_team": "D", "probabilities": {"updated": True}},
+        {"match_id": 3, "home_team": "E", "away_team": "F", "probabilities": {}},
+    ]
+
+    merged = daily_predict.merge_predictions(existing, new_predictions)
+    by_id = {p["match_id"]: p for p in merged}
+    assert set(by_id) == {1, 2, 3}
+    assert by_id[2]["probabilities"] == {"updated": True}  # 겹치는 경기는 새 결과로 덮어씀
+
+
+def test_merge_predictions_with_no_existing_file_returns_new_only():
+    merged = daily_predict.merge_predictions(None, [{"match_id": 1, "probabilities": {}}])
+    assert len(merged) == 1
 
 
 def test_build_daily_predictions_empty_when_no_fixtures(monkeypatch):

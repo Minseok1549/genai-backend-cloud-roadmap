@@ -24,11 +24,29 @@ def load_model_bundle(path: Path) -> dict:
     bundle = joblib.load(path)
     if "model_version" not in bundle:
         raise RuntimeError(f"{path}에 model_version이 없습니다 — train.py를 다시 실행하세요")
+    # bundle["classes"]는 predict_proba 결과 순서를 라벨과 맞추는 데 쓰인다. train.py가
+    # 저장 시점에 model.classes_에서 그대로 뽑아 쓰므로 정상이라면 항상 일치해야 하는데,
+    # bundle이 수동으로 조작되거나 손상되면 확률이 조용히 엉뚱한 라벨에 매핑될 수 있어
+    # 로드 시점에 한 번 검증한다.
+    if list(bundle["model"].classes_) != bundle["classes"]:
+        raise RuntimeError(f"{path}의 model_bundle이 손상됐습니다 — classes가 모델과 불일치")
     return bundle
 
 
+def _current_season_known_teams(matches: pd.DataFrame) -> set:
+    """강등팀은 과거 시즌 로그에 계속 남아있어 known_teams 체크를 그대로 통과하면, 몇 년 전
+    기록으로 '최근 폼'이 계산돼버린다. 그래서 팀 존재 여부는 (완료된 경기가 있는) 가장 최근
+    시즌 경기로만 판단한다 — 새 시즌에 아직 끝난 경기가 없으면 자연히 직전 시즌이 최근
+    시즌으로 선택되므로, 진행 중인 팀은 계속 known으로 인식된다."""
+    if matches.empty:
+        return set()
+    latest_season = matches["season"].max()
+    season_matches = matches[matches["season"] == latest_season]
+    return set(season_matches["home_team"]) | set(season_matches["away_team"])
+
+
 def predict_match(home_team: str, away_team: str, matches: pd.DataFrame, model_bundle: dict) -> dict:
-    known_teams = set(matches["home_team"]) | set(matches["away_team"])
+    known_teams = _current_season_known_teams(matches)
     for team in (home_team, away_team):
         if team not in known_teams:
             raise UnknownTeamError(team)

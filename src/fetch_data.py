@@ -6,7 +6,9 @@
 """
 import json
 import os
+import threading
 import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -86,8 +88,10 @@ def ensure_season_cached(season: int, api_key: str) -> bool:
     validate_matches_payload(data)  # 손상된 응답이면 여기서 예외 -> 기존 캐시 보존
 
     # 동시 요청이 같은 파일을 읽는 도중에 truncate된 내용을 보지 않도록 같은 디렉터리에
-    # 임시로 쓴 뒤 os.replace()로 원자적 교체한다.
-    tmp_path = out_path.with_suffix(f".tmp{os.getpid()}")
+    # 임시로 쓴 뒤 os.replace()로 원자적 교체한다. FastAPI의 동기 핸들러는 스레드풀에서
+    # 병렬 실행되므로 PID만으로는 같은 프로세스 내 동시 호출이 같은 임시 파일에 쓸 수
+    # 있다 — 스레드 ID와 uuid를 더해 호출마다 고유한 파일명을 보장한다.
+    tmp_path = out_path.with_suffix(f".tmp{os.getpid()}-{threading.get_ident()}-{uuid.uuid4().hex}")
     tmp_path.write_text(json.dumps(data))
     os.replace(tmp_path, out_path)
     return True

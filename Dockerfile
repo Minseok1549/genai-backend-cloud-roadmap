@@ -10,4 +10,5 @@ COPY models/ models/
 COPY data/ data/
 
 EXPOSE 8000
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "src"]
+ENV PORT=8000
+CMD uvicorn api:app --host 0.0.0.0 --port ${PORT} --app-dir src

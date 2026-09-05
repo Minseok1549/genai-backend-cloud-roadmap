@@ -1,7 +1,8 @@
 .venv/
+.git/
 __pycache__/
 *.pyc
-.env
-data/raw/
-models/
 .pytest_cache/
+.env
+notes/
+tests/

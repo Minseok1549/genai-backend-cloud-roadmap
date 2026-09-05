@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: epl_predictions
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/epl_predictions
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: install deps
+        run: pip install -r requirements.txt pytest httpx
+
+      - name: fetch data + train model
+        working-directory: src
+        run: |
+          python fetch_data.py
+          python train.py
+
+      - name: run tests
+        run: pytest -v
+
+      - name: upload model + data for build job
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-and-data
+          path: |
+            models/
+            data/raw/
+          retention-days: 1
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download model + data from test job
+        uses: actions/download-artifact@v4
+        with:
+          name: model-and-data
+
+      - name: build docker image
+        run: docker build -t epl-predictor:${{ github.sha }} .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: deploy (placeholder — Day 2 블록 2에서 실제 클라우드 배포로 교체)
+        run: |
+          echo "test와 build를 모두 통과해야만 여기 도달한다."
+          echo "실제 배포 단계에서는 정적 키 파일 대신 OIDC 토큰 교환으로 클라우드에 인증한다"
+          echo "(GCP Workload Identity Federation / AWS AssumeRoleWithWebIdentity / Azure Entra workload identity federation)."

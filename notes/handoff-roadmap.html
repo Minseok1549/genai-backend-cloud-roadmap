@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Matchday Dispatch</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#f2f0e6;
+  --surface:#ffffff;
+  --surface-2:#eae6d8;
+  --text:#1a1d1a;
+  --text-dim:#5c655c;
+  --border:#d9d5c7;
+  --accent:#1e6b3c;
+  --accent-ink:#ffffff;
+  --warn:#c8511b;
+  --danger:#b02a2a;
+  --code-bg:#12140f;
+  --code-text:#e9e6da;
+  --shadow: 0 1px 2px rgba(20,20,10,.06), 0 8px 24px rgba(20,20,10,.05);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12140f;
+    --surface:#191c15;
+    --surface-2:#1f231a;
+    --text:#e9e6da;
+    --text-dim:#9aa08f;
+    --border:#2b3025;
+    --accent:#4fae7a;
+    --accent-ink:#0b1410;
+    --warn:#e2833f;
+    --danger:#e2585a;
+    --code-bg:#0b0d09;
+    --code-text:#d9e6d9;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12140f;
+  --surface:#191c15;
+  --surface-2:#1f231a;
+  --text:#e9e6da;
+  --text-dim:#9aa08f;
+  --border:#2b3025;
+  --accent:#4fae7a;
+  --accent-ink:#0b1410;
+  --warn:#e2833f;
+  --danger:#e2585a;
+  --code-bg:#0b0d09;
+  --code-text:#d9e6d9;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:"Public Sans", -apple-system, sans-serif;
+  line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:840px;margin:0 auto;padding:0 24px 96px;}
+
+/* ---------- Hero ---------- */
+.hero{
+  padding:64px 24px 40px;
+  border-bottom:1px solid var(--border);
+  background:
+    repeating-linear-gradient(90deg, transparent, transparent 79px, var(--border) 79px, var(--border) 80px),
+    var(--surface);
+}
+.hero-inner{max-width:840px;margin:0 auto;}
+.eyebrow{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--accent);
+  display:flex;align-items:center;gap:8px;
+  margin-bottom:18px;
+}
+.eyebrow::before{content:"●";animation:pulse 2.4s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+@media (prefers-reduced-motion: reduce){.eyebrow::before{animation:none;}}
+h1{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:800;
+  font-size:clamp(2.6rem, 6vw, 4.4rem);
+  line-height:.94;
+  letter-spacing:-.01em;
+  margin:0 0 18px;
+  text-wrap:balance;
+  text-transform:uppercase;
+}
+h1 em{font-style:normal;color:var(--accent);}
+.dek{
+  font-size:1.08rem;
+  color:var(--text-dim);
+  max-width:64ch;
+  margin:0 0 28px;
+}
+.hero-meta{
+  display:flex;flex-wrap:wrap;gap:10px;
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.78rem;
+}
+.hero-meta span{
+  border:1px solid var(--border);
+  border-radius:999px;
+  padding:5px 12px;
+  color:var(--text-dim);
+}
+
+/* ---------- TOC ---------- */
+nav.toc{
+  max-width:840px;margin:0 auto;
+  padding:20px 24px;
+  display:flex;flex-wrap:wrap;gap:8px;
+  border-bottom:1px solid var(--border);
+}
+nav.toc a{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.76rem;
+  color:var(--text);
+  text-decoration:none;
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:7px 11px;
+  background:var(--surface);
+  transition:border-color .15s, color .15s;
+}
+nav.toc a:hover{border-color:var(--accent);color:var(--accent);}
+nav.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+/* ---------- Sections ---------- */
+section{padding:56px 0 8px;border-bottom:1px solid var(--border);}
+section:last-of-type{border-bottom:none;}
+.sec-num{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.78rem;
+  color:var(--accent);
+  letter-spacing:.08em;
+}
+h2{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:700;
+  font-size:clamp(1.7rem, 3.4vw, 2.3rem);
+  text-transform:uppercase;
+  letter-spacing:-.005em;
+  margin:6px 0 20px;
+  text-wrap:balance;
+}
+h3{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:700;
+  font-size:1.28rem;
+  text-transform:uppercase;
+  letter-spacing:.01em;
+  margin:28px 0 10px;
+}
+p{margin:0 0 16px;max-width:70ch;}
+strong{font-weight:600;}
+a{color:var(--accent);}
+ul,ol{margin:0 0 16px;padding-left:1.3em;max-width:68ch;}
+li{margin-bottom:6px;}
+code{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.86em;
+  background:var(--surface-2);
+  padding:.12em .38em;
+  border-radius:4px;
+}
+
+/* callout */
+.callout{
+  border:1px solid var(--border);
+  border-left:3px solid var(--accent);
+  background:var(--surface);
+  border-radius:6px;
+  padding:16px 18px;
+  margin:0 0 20px;
+  box-shadow:var(--shadow);
+}
+.callout.warn{border-left-color:var(--warn);}
+.callout p:last-child{margin-bottom:0;}
+.callout-label{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  color:var(--text-dim);
+  margin-bottom:8px;
+  display:block;
+}
+
+/* stat row */
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px;background:var(--border);
+  border:1px solid var(--border);
+  border-radius:8px;
+  overflow:hidden;
+  margin:0 0 22px;
+}
+.stat{background:var(--surface);padding:18px 16px;}
+.stat .n{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-size:2.1rem;font-weight:800;line-height:1;
+  color:var(--accent);
+  font-variant-numeric:tabular-nums;
+}
+.stat .l{font-size:.8rem;color:var(--text-dim);margin-top:6px;}
+
+/* compare table */
+.compare{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:.92rem;}
+.compare th,.compare td{
+  border:1px solid var(--border);
+  padding:10px 12px;
+  text-align:left;
+  vertical-align:top;
+}
+.compare th{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  background:var(--surface-2);
+  color:var(--text-dim);
+}
+.tblwrap{overflow-x:auto;margin-bottom:22px;}
+
+/* boundary chips */
+.tiers{display:flex;flex-direction:column;gap:10px;margin:0 0 22px;}
+.tier{
+  display:flex;gap:14px;align-items:flex-start;
+  border:1px solid var(--border);border-radius:8px;
+  padding:12px 14px;background:var(--surface);
+}
+.tier .badge{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;font-weight:600;
+  border-radius:5px;padding:4px 9px;white-space:nowrap;
+}
+.tier.ok .badge{background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);}
+.tier.ask .badge{background:color-mix(in srgb, var(--warn) 18%, transparent);color:var(--warn);}
+.tier.no .badge{background:color-mix(in srgb, var(--danger) 18%, transparent);color:var(--danger);}
+.tier div.txt{font-size:.92rem;color:var(--text-dim);}
+.tier div.txt strong{color:var(--text);}
+
+/* pipeline */
+.pipeline{
+  display:flex;flex-wrap:wrap;gap:0;align-items:stretch;
+  margin:0 0 22px;
+}
+.pipeline .node{
+  flex:1 1 140px;
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:8px;
+  padding:14px 14px 16px;
+  position:relative;
+}
+.pipeline .node + .node{margin-left:22px;}
+.pipeline .node::before{
+  content:"→";
+  position:absolute;left:-22px;top:50%;transform:translateY(-50%);
+  color:var(--text-dim);font-size:1.1rem;
+}
+.pipeline .role{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent);display:block;margin-bottom:6px;
+}
+.pipeline .who{font-weight:700;margin-bottom:4px;}
+.pipeline .what{font-size:.85rem;color:var(--text-dim);}
+@media (max-width:640px){
+  .pipeline{flex-direction:column;}
+  .pipeline .node + .node{margin-left:0;margin-top:22px;}
+  .pipeline .node::before{content:"↓";left:50%;top:-20px;transform:translateX(-50%);}
+}
+
+/* day blocks */
+.day-head{
+  display:flex;align-items:baseline;gap:14px;
+  margin:0 0 6px;
+}
+.day-head .tag{
+  font-family:"IBM Plex Mono", monospace;
+  background:var(--accent);color:var(--accent-ink);
+  font-size:.75rem;font-weight:600;
+  border-radius:5px;padding:4px 10px;
+}
+.day-sub{color:var(--text-dim);margin-bottom:24px;font-size:.95rem;}
+
+.block{
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--surface);
+  box-shadow:var(--shadow);
+  padding:20px 22px 22px;
+  margin-bottom:20px;
+}
+.block-top{
+  display:flex;justify-content:space-between;align-items:baseline;
+  gap:12px;flex-wrap:wrap;
+  margin-bottom:10px;
+}
+.block-top h4{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:700;font-size:1.15rem;
+  text-transform:uppercase;margin:0;
+}
+.time{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.74rem;color:var(--text-dim);
+  border:1px solid var(--border);border-radius:999px;
+  padding:3px 10px;white-space:nowrap;
+}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:.9rem;margin-bottom:12px;}
+.kv dt{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-dim);padding-top:2px;
+}
+.kv dd{margin:0;}
+
+pre{
+  background:var(--code-bg);color:var(--code-text);
+  border-radius:8px;padding:14px 16px;
+  overflow-x:auto;
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.82rem;line-height:1.55;
+  margin:0;
+}
+pre .c{color:#8a9a86;}
+
+/* prompt block */
+.prompt-block{
+  background:var(--code-bg);color:var(--code-text);
+  border-radius:10px;padding:22px 22px 20px;
+  margin:0 0 22px;
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.84rem;line-height:1.7;
+  white-space:pre-wrap;
+  box-shadow:var(--shadow);
+}
+.prompt-block .lbl{
+  display:block;color:#8a9a86;font-size:.7rem;
+  letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;
+}
+
+.sources{font-size:.86rem;}
+.sources li{margin-bottom:10px;color:var(--text-dim);}
+.sources a{word-break:break-word;}
+
+footer{
+  max-width:840px;margin:0 auto;padding:40px 24px 60px;
+  color:var(--text-dim);font-size:.82rem;
+  font-family:"IBM Plex Mono", monospace;
+}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow">Dispatch Log · 2026-09-05</span>
+    <h1>Matchday<br><em>Dispatch</em></h1>
+    <p class="dek">EPL 예측 서비스를 소재로, 백엔드~클라우드를 이틀 만에 훑는 스프린트다. 목표는 서버 지식을 완성하는 게 아니라 — Gen AI에게 작업을 어떻게 설계해서 맡기는지, 그 위임 능력을 체득하는 것이다.</p>
+    <div class="hero-meta">
+      <span>기간 2일</span>
+      <span>주 실행자 Claude Code</span>
+      <span>교차 검증 Codex</span>
+      <span>주제 EPL 승부 예측 API</span>
+    </div>
+  </div>
+</div>
+
+<nav class="toc">
+  <a href="#situation">0 · 지금 상태</a>
+  <a href="#shift">1 · 위임 패러다임</a>
+  <a href="#framework">2 · 스펙 프레임워크</a>
+  <a href="#review">3 · 교차 검증</a>
+  <a href="#sprint">4 · 2일 스프린트</a>
+  <a href="#kickoff">5 · 킥오프 프롬프트</a>
+  <a href="#sources">출처</a>
+</nav>
+
+<div class="wrap">
+
+<section id="situation">
+  <span class="sec-num">00</span>
+  <h2>지금 상태 — 완전한 백지</h2>
+  <p>2026-08-31에 시작한 8주짜리 백엔드~클라우드 로드맵과 그 실습 코드(<code>pl-match-predictor/</code>, <code>genai-backend-cloud-roadmap/</code>)를 2026-09-05에 전부 삭제했다. Git 이력이 없었기 때문에 복구 불가능한 삭제였고, 여기에는 원래 있던 EPL 예측 모델 코드(<code>features.py</code>, <code>train.py</code>)까지 포함된다.</p>
+  <div class="callout warn">
+    <span class="callout-label">주의해야 할 것</span>
+    <p>다음 세션은 API/DB/Docker뿐 아니라 <strong>예측 모델 학습 코드부터</strong> 다시 만들어야 한다. 손실이 아니라 조건이다 — "완전히 새로운 프로젝트를 처음부터 AI에게 위임하는" 이 로드맵의 연습 시나리오와 정확히 맞아떨어진다.</p>
+  </div>
+  <p>목표도 함께 바뀌었다. 원래는 8주에 걸쳐 개념을 깊이 이해하는 것이었다면, 지금은 <strong>이해의 깊이보다 위임의 정확도</strong>를 기른다. 코드는 Claude Code가 짜고, 사용자는 무엇을 어떤 형식으로 요청해야 좋은 결과가 나오는지를 이 이틀 동안 반복 훈련한다.</p>
+</section>
+
+<section id="shift">
+  <span class="sec-num">01</span>
+  <h2>왜 "위임하는 법"이 따로 배울 일이 됐나</h2>
+  <p>2025년 초 Andrej Karpathy가 만든 "vibe coding"이라는 말은 원래 "설명하고, 받아들이고, 넘어간다"는 가벼운 작업 방식을 가리켰다. 그런데 2026년 그가 직접 이 방식의 종료를 선언했다. Sequoia AI Ascent 발표에서 그는 "vibe coding은 바닥을 높였을 뿐이고, 지금 필요한 건 천장을 넓히는 것"이라며 후속 개념으로 <strong>agentic engineering</strong>을 제시했다.</p>
+  <div class="tblwrap">
+    <table class="compare">
+      <tr><th></th><th>Vibe Coding</th><th>Agentic Engineering</th></tr>
+      <tr><td><strong>사람의 역할</strong></td><td>요청하고 결과를 수용</td><td>스펙 설계, 계획 감독, 권한 관리</td></tr>
+      <tr><td><strong>검증</strong></td><td>돌아가면 끝</td><td>diff 검사, 테스트, 평가 루프를 직접 설계</td></tr>
+      <tr><td><strong>격리</strong></td><td>메인 브랜치에 바로 반영</td><td>worktree/브랜치로 격리 후 병합</td></tr>
+      <tr><td><strong>실패 원인</strong></td><td>AI가 틀렸다</td><td>내 스펙이 모호했다</td></tr>
+    </table>
+  </div>
+  <p>이 표의 오른쪽 칸이 이번 이틀 동안 사용자가 실제로 연습할 역할이다. 코드를 직접 짜지 않아도, "오케스트레이터"로서 해야 할 일은 분명히 있다.</p>
+  <div class="stats">
+    <div class="stat"><div class="n">84%</div><div class="l">개발자 AI 도구 채택률 (전년 76%)</div></div>
+    <div class="stat"><div class="n">51%</div><div class="l">전문 개발자 중 매일 사용</div></div>
+    <div class="stat"><div class="n">29%</div><div class="l">"결과가 정확하다"고 신뢰 (2024년 40%)</div></div>
+    <div class="stat"><div class="n">18%</div><div class="l">특화 AI IDE 중 Claude Code 점유율(공동 1위)</div></div>
+  </div>
+  <p style="color:var(--text-dim);font-size:.88rem;">Stack Overflow 2026 Developer Survey 집계 기준. 채택률은 사상 최고인데 신뢰도는 사상 최저다 — 검증 없이 위임하는 경우가 늘고 있다는 뜻이고, 이 로드맵이 다루는 게 바로 그 검증 구조다.</p>
+</section>
+
+<section id="framework">
+  <span class="sec-num">02</span>
+  <h2>스펙 기반 위임 프레임워크</h2>
+  <p>GitHub가 만든 오픈소스 도구 <a href="https://github.com/github/spec-kit" target="_blank" rel="noopener">Spec Kit</a>은 "무엇을 어떻게 시켜야 하는가"를 4단계로 표준화했다. 이번 스프린트의 모든 블록은 이 순서를 따른다.</p>
+  <div class="pipeline">
+    <div class="node"><span class="role">1 Specify</span><div class="who">무엇을, 왜</div><div class="what">기술 디테일 없이 요구사항과 이유만</div></div>
+    <div class="node"><span class="role">2 Plan</span><div class="who">어떻게</div><div class="what">스택, 아키텍처, 제약 조건</div></div>
+    <div class="node"><span class="role">3 Tasks</span><div class="who">작은 단위로</div><div class="what">독립적으로 테스트 가능한 작업 목록</div></div>
+    <div class="node"><span class="role">4 Implement</span><div class="who">구현</div><div class="what">작은 diff, 각 단계 검증 후 다음 단계</div></div>
+  </div>
+  <p>핵심 규칙은 하나다 — <strong>현재 단계가 완전히 검증되기 전에는 다음 단계로 넘어가지 않는다.</strong> 스펙이 애매하면 AI가 마음대로 해석하게 두지 말고 <code>[NEEDS CLARIFICATION]</code>처럼 표시하게 시킨다.</p>
+
+  <h3>스펙에 반드시 넣을 6가지</h3>
+  <p>Addy Osmani가 2,500개 이상의 실제 agent 설정 파일을 분석해 정리한 항목이다. 길게 설명할 필요 없이, 아래 6개 칸만 채우면 대부분의 위임 실패를 막는다.</p>
+  <div class="tblwrap">
+    <table class="compare">
+      <tr><th>영역</th><th>채울 내용</th></tr>
+      <tr><td>Commands</td><td>실제 실행할 커맨드와 플래그 (예: <code>pytest -x tests/</code>)</td></tr>
+      <tr><td>Testing</td><td>어떤 프레임워크, 어디에 두는지, 어느 정도 커버해야 하는지</td></tr>
+      <tr><td>Project structure</td><td>디렉터리 레이아웃 (파일이 어디로 가야 하는지)</td></tr>
+      <tr><td>Code style</td><td>설명보다 실제 코드 샘플 1개가 더 정확하다</td></tr>
+      <tr><td>Git workflow</td><td>브랜치명, 커밋 메시지 형식, PR 요건</td></tr>
+      <tr><td>Boundaries</td><td>절대 하면 안 되는 것 (아래 3단계 표 참고)</td></tr>
+    </table>
+  </div>
+  <p>주의할 것 하나 — Osmani는 이걸 "지시의 저주(curse of instructions)"라고 부르는데, 한 프롬프트에 요구사항이 쌓일수록 AI 성능이 떨어진다. 6개를 한 번에 다 쓰지 말고, 블록 단위로 필요한 만큼만 쓴다.</p>
+
+  <h3>권한 3단계</h3>
+  <div class="tiers">
+    <div class="tier ok"><span class="badge">✅ ALWAYS DO</span><div class="txt">승인 없이 진행. 예: 테스트 작성, 로컬 파일 수정, 로컬 실행</div></div>
+    <div class="tier ask"><span class="badge">⚠️ ASK FIRST</span><div class="txt">영향이 크면 먼저 물어본다. 예: 새 의존성 추가, 스키마 변경, 클라우드 리소스 생성</div></div>
+    <div class="tier no"><span class="badge">🚫 NEVER DO</span><div class="txt">하드 스톱. 예: <code>git push</code>, 프로덕션 설정, 시크릿 파일 수정</div></div>
+  </div>
+  <p style="color:var(--text-dim);font-size:.88rem;">이 3단계는 이미 이 세션의 <code>CLAUDE.md</code> 안전 규칙(파괴적 명령·git push·시크릿 파일)과 정확히 같은 구조다 — 새로 배울 게 아니라, 지금까지 무의식적으로 따라온 규칙에 이름을 붙인 것뿐이다.</p>
+</section>
+
+<section id="review">
+  <span class="sec-num">03</span>
+  <h2>Claude Code + Codex, 서로 다른 눈으로 검증하기</h2>
+  <p>같은 모델이 자기가 쓴 코드를 스스로 검토하는 건 "자동수정이 자기 자동수정을 검토하는" 것과 같다. 서로 다른 벤더의 모델은 학습 과정이 다르기 때문에 놓치는 지점도 다르다 — 한쪽이 놓친 SQL 인젝션 패턴을 다른 쪽이 잡아내는 식이다. 이건 이미 사용자가 이전 프로젝트에서 <code>codex exec</code>(gpt-5.6-sol, high reasoning)로 Claude 산출물을 검증하던 습관인데, 이번 스프린트에서는 그 습관을 공식 파이프라인으로 승격한다.</p>
+  <div class="pipeline">
+    <div class="node"><span class="role">Coordinator</span><div class="who">사용자</div><div class="what">스펙 작성, 최종 승인</div></div>
+    <div class="node"><span class="role">Implementor</span><div class="who">Claude Code</div><div class="what">스펙대로 구현, 작은 diff 단위</div></div>
+    <div class="node"><span class="role">Verifier</span><div class="who">Codex</div><div class="what">스펙과 대조 검증, 다른 결점 탐색</div></div>
+  </div>
+  <div class="callout">
+    <span class="callout-label">실행 리듬</span>
+    <p>프로젝트 전체를 몰아서 한 번에 검증하지 않는다. <strong>레이어 하나(엔드포인트 1개, 스키마 1개, Dockerfile 1개)가 끝날 때마다</strong> Codex 검증을 1회 돌린다 — Spec Kit의 "작은 diff" 원칙과 같은 이유다. 검증 범위가 좁을수록 결함이 명확하게 드러난다.</p>
+  </div>
+</section>
+
+<section id="sprint">
+  <span class="sec-num">04</span>
+  <h2>2일 스프린트</h2>
+  <p>Day 1은 로컬에서 완전히 도는 것을 만든다. Day 2는 그걸 클라우드에 최소한으로 얹고 관측 가능하게 만든다. Kubernetes, Terraform, 재학습 파이프라인 자동화 같은 것들은 의도적으로 범위 밖에 둔다 — 개념만 한 줄로 짚고 넘어간다.</p>
+
+  <div class="day-head"><span class="tag">DAY 1</span><h3 style="margin:0;">로컬에서 도는 것 만들기</h3></div>
+  <p class="day-sub">모델 → API → 저장 → 컨테이너, 네 블록을 순서대로 스펙-구현-검증한다.</p>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 1 · 예측 모델 재건</h4><span class="time">60–90분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd>삭제된 <code>features.py</code>/<code>train.py</code>를 스펙만으로 다시 만들게 시킨다 — 이 블록 자체가 "제로베이스 위임" 연습</dd>
+      <dt>산출물</dt><dd>과거 EPL 매치 데이터를 받아 홈/원정 승무패 확률을 내는 학습된 모델 파일</dd>
+      <dt>검증</dt><dd>Codex에게 "데이터 누수(data leakage) 없는지"만 집중 검토 요청 — 이 유형 버그가 가장 흔하고 발견하기 어렵다</dd>
+    </dl>
+  </div>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 2 · FastAPI 서빙</h4><span class="time">45–60분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd><code>GET /health</code>, <code>POST /predict</code> 두 엔드포인트 + pytest</dd>
+      <dt>산출물</dt><dd>모델을 로드해서 요청마다 예측을 반환하는 API 서버</dd>
+      <dt>검증</dt><dd>잘못된 입력(팀명 오타, 빈 값)을 넣었을 때 500이 아니라 400을 반환하는지</dd>
+    </dl>
+  </div>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 3 · 예측 기록 저장</h4><span class="time">45–60분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd>Postgres에 예측마다 <code>model_version</code>/<code>data_version</code>/<code>schema_version</code> 3열과 함께 저장 — Alembic 내부 구조는 몰라도 되고, "왜 이 3열이 처음부터 필요한지"만 알면 충분</dd>
+      <dt>산출물</dt><dd>predictions 테이블 + 저장 로직</dd>
+      <dt>검증</dt><dd>모델을 재학습해서 버전이 바뀌었을 때 과거 기록의 버전 값이 덮어써지지 않는지</dd>
+    </dl>
+  </div>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 4 · Docker Compose로 묶기</h4><span class="time">30–45분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd>API 컨테이너 + DB 컨테이너를 함께 띄운다</dd>
+      <dt>함정</dt><dd>DB 컨테이너가 "시작됨" ≠ "요청을 받을 준비됨". healthcheck 없이 <code>depends_on</code>만 쓰면 API가 DB보다 먼저 붙으려다 죽는다</dd>
+      <dt>검증</dt><dd><code>docker compose up</code> 한 번으로 <code>/health</code>, <code>/predict</code> 실호출이 성공하는지</dd>
+    </dl>
+  </div>
+
+  <div class="day-head"><span class="tag">DAY 2</span><h3 style="margin:0;">배포와 관측, 최소한으로</h3></div>
+  <p class="day-sub">클라우드 벤더 명령어 암기가 아니라, 어느 클라우드에서든 통하는 패턴을 잡는다.</p>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 1 · CI/CD 게이팅 개념</h4><span class="time">30–45분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd>test → build → deploy 3단계가 순서대로 통과해야만 다음으로 넘어가는 파이프라인 구성</dd>
+      <dt>일반개념</dt><dd>정적 키 파일 대신 OIDC 토큰 교환으로 클라우드에 인증하는 방식(GCP Workload Identity Federation, AWS <code>AssumeRoleWithWebIdentity</code>, Azure Entra workload identity federation — 이름은 달라도 원리는 동일)</dd>
+      <dt>검증</dt><dd>테스트를 일부러 실패시켰을 때 배포 단계까지 가지 않고 멈추는지</dd>
+    </dl>
+  </div>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 2 · 최소 클라우드 배포</h4><span class="time">45–60분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd>서버리스 컨테이너 서비스 하나에 API를 올린다 (GCP Cloud Run급 — 특정 벤더 학습이 목적이 아니므로 이미 계정이 있는 곳을 사용)</dd>
+      <dt>스코프 아웃</dt><dd>Kubernetes/GKE, Terraform — 이번엔 콘솔/CLI로 직접 배포하고 개념만 한 줄로 짚는다</dd>
+      <dt>검증</dt><dd>배포된 URL로 <code>/health</code>가 응답하는지</dd>
+    </dl>
+  </div>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 3 · 최소 관측/롤백</h4><span class="time">30–45분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd>구조화 로그(요청 ID 포함) + 헬스체크 실패 시 어떻게 알아차릴지 + 이전 버전으로 되돌리는 절차를 문서 한 장으로 정리</dd>
+      <dt>검증</dt><dd>일부러 배포를 망가뜨린 뒤, 문서만 보고 롤백 절차를 따라갈 수 있는지</dd>
+    </dl>
+  </div>
+
+  <div class="block">
+    <div class="block-top"><h4>블록 4 · 회고</h4><span class="time">20–30분</span></div>
+    <dl class="kv">
+      <dt>목표</dt><dd>이틀간 쓴 스펙 중 결과가 좋았던 것과 다시 써야 했던 것을 나란히 놓고 비교</dd>
+      <dt>산출물</dt><dd>다음 프로젝트에 재사용할 나만의 스펙 템플릿(6영역 체크리스트를 이번 경험으로 다시 채운 버전)</dd>
+    </dl>
+  </div>
+</section>
+
+<section id="kickoff">
+  <span class="sec-num">05</span>
+  <h2>새 세션 킥오프 프롬프트</h2>
+  <p>이 세션은 여기서 끝나고, 다음 세션에서 Day 1 블록 1부터 시작한다. 아래를 그대로 붙여넣으면 된다 — Spec Kit의 Specify 형식(무엇을/왜 중심, 기술 디테일 배제)을 따랐다.</p>
+  <div class="prompt-block"><span class="lbl">paste into new session</span>~/sandbox/genai-backend-cloud-roadmap/notes/handoff-roadmap.html 문서 기준으로
+Day 1 블록 1(예측 모델 재건)부터 시작한다.
+
+무엇을: 과거 EPL 경기 데이터로 홈/무/원정 승부 확률을 예측하는
+학습 모델을 처음부터 새로 만든다. (이전 코드는 삭제되어 없음)
+
+왜: 완벽한 이해보다 "제로베이스 프로젝트를 스펙만으로 위임하는"
+연습이 목적이다. 데이터 누수 없는 검증 가능한 모델이면 충분하다.
+
+권한: ✅ 로컬 파일 생성/수정, 테스트 실행은 승인 없이 진행
+     ⚠️ 새 의존성 추가 전에는 먼저 물어볼 것
+     🚫 git commit/push, .env·키 파일 수정은 하지 말 것
+
+이 블록이 끝나면 결과를 요약하고, Codex 교차 검증이 필요한
+지점(데이터 누수 여부)을 짚어줘.</div>
+
+  <div class="callout">
+    <span class="callout-label">이어서</span>
+    <p>블록이 끝날 때마다 이 문서의 해당 블록 표(목표/산출물/검증)를 그대로 다음 위임 스펙의 골격으로 쓴다. Day 1이 끝나면 Day 2 블록 1로 같은 패턴을 반복한다.</p>
+  </div>
+</section>
+
+</div>
+
+<footer id="sources">
+  <div style="font-size:.9rem;color:var(--text);margin-bottom:14px;font-family:'Public Sans',sans-serif;">출처</div>
+  <ol class="sources">
+    <li>Karpathy, "Sequoia Ascent 2026 summary" — vibe coding에서 agentic engineering으로의 전환 선언. <a href="https://karpathy.bearblog.dev/sequoia-ascent-2026/" target="_blank" rel="noopener">karpathy.bearblog.dev/sequoia-ascent-2026</a></li>
+    <li>GitHub Blog, "Spec-driven development with AI: Get started with a new open source toolkit" — Spec Kit 4단계 워크플로. <a href="https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/" target="_blank" rel="noopener">github.blog</a></li>
+    <li>GitHub, <code>github/spec-kit</code> 저장소 및 <code>spec-driven.md</code>. <a href="https://github.com/github/spec-kit" target="_blank" rel="noopener">github.com/github/spec-kit</a></li>
+    <li>Addy Osmani, "How to write a good spec for AI agents" — 6영역 체크리스트, 3단계 권한, "지시의 저주". <a href="https://addyosmani.com/blog/good-spec/" target="_blank" rel="noopener">addyosmani.com/blog/good-spec</a></li>
+    <li>MindStudio, "Cross-Vendor AI Agent Review: Why Claude Should Review Codex's Code and Vice Versa". <a href="https://www.mindstudio.ai/blog/cross-vendor-ai-agent-review-claude-codex" target="_blank" rel="noopener">mindstudio.ai/blog/cross-vendor-ai-agent-review-claude-codex</a></li>
+    <li>"Cross-Model LLM Code Review: Should you use Claude to review Codex or vice versa?" arXiv:2607.21656. <a href="https://arxiv.org/html/2607.21656v1" target="_blank" rel="noopener">arxiv.org/html/2607.21656v1</a></li>
+    <li>Stack Overflow 2026 Developer Survey 집계 — AI 도구 채택률·신뢰도·Claude Code 점유율. <a href="https://byteiota.com/stack-overflow-dev-survey-2026-ai-at-84-trust-at-3/" target="_blank" rel="noopener">byteiota.com</a>, <a href="https://cadence.withremote.ai/blog/stack-overflow-survey-2026" target="_blank" rel="noopener">cadence.withremote.ai</a></li>
+  </ol>
+</footer>
+
+</body>
+</html>

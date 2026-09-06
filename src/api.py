@@ -1,13 +1,17 @@
 """EPL 승부 예측 API. /predict는 호출 시점마다 최신 시즌 경기를 반영해 팀 폼을 다시 계산한다."""
+import json
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from google.cloud import storage
 from pydantic import BaseModel, Field, field_validator
 
 import db
@@ -18,6 +22,7 @@ from predictor import predict_match, load_model_bundle, UnknownTeamError, Insuff
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = ROOT / "models" / "model.joblib"
+PREDICTIONS_BUCKET = os.environ.get("PREDICTIONS_BUCKET")
 
 
 @asynccontextmanager
@@ -142,3 +147,87 @@ def predict(req: PredictRequest, request: Request):
         "away_team": req.away_team,
         "probabilities": probabilities,
     }
+
+
+def _fetch_daily_predictions(date_str: str) -> dict | None:
+    if not PREDICTIONS_BUCKET:
+        return None
+    try:
+        blob = storage.Client().bucket(PREDICTIONS_BUCKET).blob(f"predictions/{date_str}.json")
+        if not blob.exists():
+            return None
+        return json.loads(blob.download_as_text())
+    except Exception as e:
+        log_json("warning", "failed to read daily predictions from GCS", date=date_str, error=str(e))
+        return None
+
+
+def _list_available_dates(limit: int = 14) -> list[str]:
+    if not PREDICTIONS_BUCKET:
+        return []
+    try:
+        blobs = storage.Client().list_blobs(PREDICTIONS_BUCKET, prefix="predictions/")
+        dates = sorted((b.name.removeprefix("predictions/").removesuffix(".json") for b in blobs), reverse=True)
+        return dates[:limit]
+    except Exception as e:
+        log_json("warning", "failed to list daily prediction dates from GCS", error=str(e))
+        return []
+
+
+def _render_dashboard_html(target_date: str, payload: dict | None, available_dates: list[str]) -> str:
+    date_links = "".join(
+        f'<a class="date-link{" active" if d == target_date else ""}" href="/dashboard?date={d}">{d}</a>'
+        for d in available_dates
+    ) or '<span class="empty">기록된 날짜가 없습니다.</span>'
+
+    predictions = sorted(payload["predictions"], key=lambda p: p["kickoff_utc"]) if payload else []
+    if not predictions:
+        body = f'<p class="empty">{target_date}에 예정된 경기 예측 기록이 없습니다.</p>'
+    else:
+        rows = "".join(
+            f"<tr><td>{p['kickoff_utc']}</td><td>{p['home_team']}</td><td>{p['away_team']}</td>"
+            f"<td>{p['probabilities'].get('HOME_TEAM', 0) * 100:.1f}%</td>"
+            f"<td>{p['probabilities'].get('DRAW', 0) * 100:.1f}%</td>"
+            f"<td>{p['probabilities'].get('AWAY_TEAM', 0) * 100:.1f}%</td></tr>"
+            for p in predictions
+        )
+        body = (
+            "<table><thead><tr><th>킥오프(UTC)</th><th>홈</th><th>원정</th>"
+            "<th>홈승</th><th>무</th><th>원정승</th></tr></thead>"
+            f"<tbody>{rows}</tbody></table>"
+            f"<p class='meta'>생성 시각(UTC): {payload.get('generated_at', '-')}</p>"
+        )
+
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>EPL 예측 대시보드</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }}
+  h1 {{ font-size: 1.4rem; }}
+  .dates {{ margin-bottom: 20px; }}
+  .date-link {{ display: inline-block; padding: 4px 10px; margin: 0 6px 6px 0; border-radius: 6px; background: #f0f0f0; text-decoration: none; color: #333; font-size: 0.85rem; }}
+  .date-link.active {{ background: #333; color: #fff; }}
+  table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+  th, td {{ padding: 8px 10px; border-bottom: 1px solid #e0e0e0; text-align: left; font-size: 0.9rem; }}
+  th {{ color: #666; font-weight: 600; }}
+  .empty {{ color: #888; }}
+  .meta {{ color: #999; font-size: 0.8rem; margin-top: 12px; }}
+</style>
+</head>
+<body>
+  <h1>EPL 매일 예측 대시보드</h1>
+  <div class="dates">{date_links}</div>
+  <h2>{target_date}</h2>
+  {body}
+</body>
+</html>"""
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(date: str | None = None):
+    target_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    payload = _fetch_daily_predictions(target_date)
+    available_dates = _list_available_dates()
+    return _render_dashboard_html(target_date, payload, available_dates)

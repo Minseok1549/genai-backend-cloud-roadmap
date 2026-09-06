@@ -384,6 +384,15 @@ API 버전 경로 문제였다. `https://run.googleapis.com/v2/projects/{project
 트리거 경로로도 동작하는 것까지 확인. 매일 06:00 UTC 자동 실행은 다음 스케줄
 때 그대로 검증된다.
 
+**대시보드 추가 — `GET /dashboard`**: GCS에 쌓이는 예측 JSON을 API 응답으로만
+확인할 수 있었는데, "매일 예측을 눈으로 보고 싶다"는 요구에 맞춰 기존
+`epl-predictor` 서비스에 사람이 보는 HTML 페이지를 추가했다. 별도 프론트엔드
+프로젝트나 새 인프라 없이 이미 있는 Cloud Run Service에 라우트 하나만 얹은
+것 — Service가 daily_predict.py의 Job과 같은 default compute 서비스 계정을
+쓰고 있어서(이미 그 SA에 버킷 `storage.objectAdmin`이 부여돼 있었다) 새
+IAM 권한 없이 바로 GCS를 읽을 수 있었다. `?date=YYYY-MM-DD`로 지난 날짜도
+조회 가능, 최근 14일 날짜 링크를 위에 보여준다.
+
 **교차 검증 — Opus + Codex, 두 리뷰어가 서로 다른 프롬프트로 같은 코드를 각자
 읽고 나온 결과를 대조**. 겹치는 항목(같은 버그를 양쪽이 독립적으로 찾음)이
 많았다는 것 자체가 실제 버그일 확률이 높다는 신호로 취급했다.

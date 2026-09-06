@@ -33,6 +33,25 @@ def test_load_fixtures_on_date_filters_status_and_date(tmp_path, monkeypatch):
     assert fixtures[0]["match_id"] == 1
 
 
+def test_load_matchday_info_returns_current_round_and_its_dates(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_module, "RAW_DIR", tmp_path)
+    payload = {
+        "matches": [
+            {"id": 1, "status": "FINISHED", "utcDate": "2026-09-04T19:00:00Z", "matchday": 3,
+             "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"}},
+            {"id": 2, "status": "TIMED", "utcDate": "2026-09-06T13:00:00Z", "matchday": 3,
+             "homeTeam": {"name": "C"}, "awayTeam": {"name": "D"}},
+            {"id": 3, "status": "SCHEDULED", "utcDate": "2026-09-13T13:00:00Z", "matchday": 4,
+             "homeTeam": {"name": "E"}, "awayTeam": {"name": "F"}},
+        ]
+    }
+    (tmp_path / "matches_2026.json").write_text(json.dumps(payload))
+
+    info = data_module.load_matchday_info(season=2026)
+    assert info["matchday"] == 3
+    assert info["dates"] == ["2026-09-04", "2026-09-06"]
+
+
 def test_build_daily_predictions_skips_failed_fixture_and_continues(monkeypatch):
     """경기 하나의 예측이 실패해도(폼 기록 부족 등) 나머지 경기 배치는 계속돼야 한다."""
     monkeypatch.setattr(daily_predict, "ensure_all_seasons_cached", lambda: None)

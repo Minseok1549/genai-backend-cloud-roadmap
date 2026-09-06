@@ -6,6 +6,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -15,7 +16,7 @@ from google.cloud import storage
 from pydantic import BaseModel, Field, field_validator
 
 import db
-from data import load_matches
+from data import load_matches, load_matchday_info
 from fetch_data import ensure_all_seasons_cached
 from logutil import log_json
 from predictor import predict_match, load_model_bundle, UnknownTeamError, InsufficientFormError
@@ -23,6 +24,8 @@ from predictor import predict_match, load_model_bundle, UnknownTeamError, Insuff
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = ROOT / "models" / "model.joblib"
 PREDICTIONS_BUCKET = os.environ.get("PREDICTIONS_BUCKET")
+KST = ZoneInfo("Asia/Seoul")
+KST_WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
 
 @asynccontextmanager
@@ -174,52 +177,129 @@ def _list_available_dates(limit: int = 14) -> list[str]:
         return []
 
 
-def _render_dashboard_html(target_date: str, payload: dict | None, available_dates: list[str]) -> str:
+def _collect_matchday_predictions(dates: list[str]) -> tuple[list[dict], str | None]:
+    """라운드가 걸쳐 있는 날짜들의 저장된 예측 파일을 모두 읽어 match_id 기준으로 합친다.
+    하루짜리 배치 파일 하나만 보면 같은 라운드의 다른 날 경기가 빠지기 때문."""
+    by_id: dict[int, dict] = {}
+    latest_generated_at = None
+    for d in dates:
+        payload = _fetch_daily_predictions(d)
+        if not payload:
+            continue
+        for p in payload["predictions"]:
+            by_id[p["match_id"]] = p
+        generated_at = payload.get("generated_at")
+        if generated_at and (latest_generated_at is None or generated_at > latest_generated_at):
+            latest_generated_at = generated_at
+    return list(by_id.values()), latest_generated_at
+
+
+def _format_kickoff_kst(kickoff_utc: str) -> str:
+    dt_kst = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00")).astimezone(KST)
+    weekday = KST_WEEKDAYS[dt_kst.weekday()]
+    return dt_kst.strftime(f"%m/%d({weekday}) %H:%M")
+
+
+def _match_card_html(p: dict) -> str:
+    probs = p.get("probabilities", {})
+    home_pct = probs.get("HOME_TEAM", 0) * 100
+    draw_pct = probs.get("DRAW", 0) * 100
+    away_pct = probs.get("AWAY_TEAM", 0) * 100
+    return f"""<div class="match-card">
+  <div class="match-time">{_format_kickoff_kst(p['kickoff_utc'])} <span class="tz">KST</span></div>
+  <div class="match-teams">
+    <span class="team">{p['home_team']}</span>
+    <span class="vs">vs</span>
+    <span class="team">{p['away_team']}</span>
+  </div>
+  <div class="prob-bar">
+    <div class="prob-seg home" style="width:{home_pct:.1f}%"></div>
+    <div class="prob-seg draw" style="width:{draw_pct:.1f}%"></div>
+    <div class="prob-seg away" style="width:{away_pct:.1f}%"></div>
+  </div>
+  <div class="prob-labels">
+    <span class="prob-label home">홈승 {home_pct:.1f}%</span>
+    <span class="prob-label draw">무 {draw_pct:.1f}%</span>
+    <span class="prob-label away">원정승 {away_pct:.1f}%</span>
+  </div>
+</div>"""
+
+
+def _render_dashboard_html(
+    view_label: str, payload: dict | None, available_dates: list[str], active_date: str | None
+) -> str:
     date_links = "".join(
-        f'<a class="date-link{" active" if d == target_date else ""}" href="/dashboard?date={d}">{d}</a>'
+        f'<a class="date-link{" active" if d == active_date else ""}" href="/dashboard?date={d}">{d}</a>'
         for d in available_dates
     ) or '<span class="empty">기록된 날짜가 없습니다.</span>'
 
     predictions = sorted(payload["predictions"], key=lambda p: p["kickoff_utc"]) if payload else []
     if not predictions:
-        body = f'<p class="empty">{target_date}에 예정된 경기 예측 기록이 없습니다.</p>'
+        body = f'<p class="empty">{view_label}에 예정된 경기 예측 기록이 없습니다.</p>'
     else:
-        rows = "".join(
-            f"<tr><td>{p['kickoff_utc']}</td><td>{p['home_team']}</td><td>{p['away_team']}</td>"
-            f"<td>{p['probabilities'].get('HOME_TEAM', 0) * 100:.1f}%</td>"
-            f"<td>{p['probabilities'].get('DRAW', 0) * 100:.1f}%</td>"
-            f"<td>{p['probabilities'].get('AWAY_TEAM', 0) * 100:.1f}%</td></tr>"
-            for p in predictions
-        )
-        body = (
-            "<table><thead><tr><th>킥오프(UTC)</th><th>홈</th><th>원정</th>"
-            "<th>홈승</th><th>무</th><th>원정승</th></tr></thead>"
-            f"<tbody>{rows}</tbody></table>"
-            f"<p class='meta'>생성 시각(UTC): {payload.get('generated_at', '-')}</p>"
-        )
+        cards = "".join(_match_card_html(p) for p in predictions)
+        generated_kst = _format_kickoff_kst(payload["generated_at"]) if payload.get("generated_at") else "-"
+        body = f'<div class="match-grid">{cards}</div><p class="meta">예측 생성 시각: {generated_kst} KST</p>'
 
     return f"""<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EPL 예측 대시보드</title>
 <style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }}
-  h1 {{ font-size: 1.4rem; }}
-  .dates {{ margin-bottom: 20px; }}
-  .date-link {{ display: inline-block; padding: 4px 10px; margin: 0 6px 6px 0; border-radius: 6px; background: #f0f0f0; text-decoration: none; color: #333; font-size: 0.85rem; }}
-  .date-link.active {{ background: #333; color: #fff; }}
-  table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-  th, td {{ padding: 8px 10px; border-bottom: 1px solid #e0e0e0; text-align: left; font-size: 0.9rem; }}
-  th {{ color: #666; font-weight: 600; }}
-  .empty {{ color: #888; }}
-  .meta {{ color: #999; font-size: 0.8rem; margin-top: 12px; }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", sans-serif;
+    max-width: 880px; margin: 0 auto; padding: 32px 16px 60px;
+    background: linear-gradient(180deg, #f4f6fb 0%, #eef1f8 400px, #f7f8fb 100%);
+    color: #1a1a2e;
+  }}
+  header {{
+    background: linear-gradient(135deg, #3a2a6d 0%, #6a2c8c 100%);
+    color: #fff; border-radius: 16px; padding: 24px 28px; margin-bottom: 20px;
+    box-shadow: 0 8px 24px rgba(58, 42, 109, 0.25);
+  }}
+  header h1 {{ margin: 0 0 4px; font-size: 1.5rem; }}
+  header p {{ margin: 0; opacity: 0.85; font-size: 0.9rem; }}
+  .dates {{ margin-bottom: 24px; display: flex; flex-wrap: wrap; }}
+  .date-link {{
+    display: inline-block; padding: 5px 12px; margin: 0 6px 6px 0; border-radius: 999px;
+    background: #fff; text-decoration: none; color: #555; font-size: 0.82rem;
+    border: 1px solid #e2e2ee; transition: background 0.15s;
+  }}
+  .date-link.active {{ background: #3a2a6d; color: #fff; border-color: #3a2a6d; }}
+  h2 {{ font-size: 1.1rem; color: #444; margin: 4px 0 16px; }}
+  .match-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }}
+  .match-card {{
+    background: #fff; border-radius: 14px; padding: 16px 18px;
+    box-shadow: 0 2px 10px rgba(30, 20, 60, 0.06); border: 1px solid #eceef7;
+  }}
+  .match-time {{ font-size: 0.78rem; color: #8a8aa0; margin-bottom: 8px; letter-spacing: 0.02em; }}
+  .match-time .tz {{ color: #b4b4c8; }}
+  .match-teams {{ display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 0.95rem; margin-bottom: 12px; }}
+  .match-teams .vs {{ color: #c2c2d6; font-weight: 400; font-size: 0.8rem; margin: 0 6px; }}
+  .match-teams .team {{ flex: 1; }}
+  .match-teams .team:last-child {{ text-align: right; }}
+  .prob-bar {{ display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #f0f0f5; margin-bottom: 8px; }}
+  .prob-seg.home {{ background: #4f6bed; }}
+  .prob-seg.draw {{ background: #c7c7d9; }}
+  .prob-seg.away {{ background: #e0526b; }}
+  .prob-labels {{ display: flex; justify-content: space-between; font-size: 0.72rem; color: #888; }}
+  .prob-label.home {{ color: #4f6bed; }}
+  .prob-label.draw {{ color: #999; }}
+  .prob-label.away {{ color: #e0526b; }}
+  .empty {{ color: #999; padding: 24px 0; }}
+  .meta {{ color: #aaa; font-size: 0.78rem; margin-top: 20px; }}
 </style>
 </head>
 <body>
-  <h1>EPL 매일 예측 대시보드</h1>
+  <header>
+    <h1>⚽ EPL 매일 예측 대시보드</h1>
+    <p>매일 자동으로 갱신되는 프리미어리그 승부 예측 (한국 시간 기준)</p>
+  </header>
   <div class="dates">{date_links}</div>
-  <h2>{target_date}</h2>
+  <h2>{view_label}</h2>
   {body}
 </body>
 </html>"""
@@ -227,7 +307,14 @@ def _render_dashboard_html(target_date: str, payload: dict | None, available_dat
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(date: str | None = None):
-    target_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    payload = _fetch_daily_predictions(target_date)
     available_dates = _list_available_dates()
-    return _render_dashboard_html(target_date, payload, available_dates)
+
+    if date:
+        payload = _fetch_daily_predictions(date)
+        return _render_dashboard_html(date, payload, available_dates, active_date=date)
+
+    matchday_info = load_matchday_info()
+    predictions, generated_at = _collect_matchday_predictions(matchday_info["dates"])
+    payload = {"predictions": predictions, "generated_at": generated_at} if predictions else None
+    view_label = f"{matchday_info['matchday']}라운드" if matchday_info["matchday"] else "오늘"
+    return _render_dashboard_html(view_label, payload, available_dates, active_date=None)

@@ -73,3 +73,25 @@ def load_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dic
             }
         )
     return fixtures
+
+
+def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
+    """가장 임박한(아직 안 끝난 경기가 있는) matchday 번호와, 그 라운드에 속한 경기들이
+    걸쳐 있는 UTC 날짜 목록을 반환한다.
+
+    EPL 한 라운드는 보통 목~월 여러 날짜에 걸쳐 열린다 — 대시보드가 날짜 하나만 보면
+    같은 라운드의 나머지 경기가 안 보이는 문제가 생겨서, 날짜 대신 matchday로 묶는다."""
+    path = RAW_DIR / f"matches_{season}.json"
+    if not path.exists():
+        return {"matchday": None, "dates": []}
+    data = json.loads(path.read_text())
+    upcoming = [m for m in data["matches"] if m["status"] in UPCOMING_STATUSES]
+    if upcoming:
+        matchday = min(m["matchday"] for m in upcoming)
+    else:
+        finished = [m for m in data["matches"] if m.get("matchday") is not None]
+        matchday = max((m["matchday"] for m in finished), default=None)
+    if matchday is None:
+        return {"matchday": None, "dates": []}
+    dates = sorted({m["utcDate"][:10] for m in data["matches"] if m["matchday"] == matchday})
+    return {"matchday": matchday, "dates": dates}

@@ -38,7 +38,8 @@ def test_load_matchday_info_returns_current_round_and_its_dates(tmp_path, monkey
     payload = {
         "matches": [
             {"id": 1, "status": "FINISHED", "utcDate": "2026-09-04T19:00:00Z", "matchday": 3,
-             "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"}},
+             "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"},
+             "score": {"fullTime": {"home": 2, "away": 1}, "winner": "HOME_TEAM"}},
             {"id": 2, "status": "TIMED", "utcDate": "2026-09-06T13:00:00Z", "matchday": 3,
              "homeTeam": {"name": "C"}, "awayTeam": {"name": "D"}},
             {"id": 3, "status": "SCHEDULED", "utcDate": "2026-09-13T13:00:00Z", "matchday": 4,
@@ -52,6 +53,8 @@ def test_load_matchday_info_returns_current_round_and_its_dates(tmp_path, monkey
     assert info["dates"] == ["2026-09-04", "2026-09-06"]
     assert [f["match_id"] for f in info["fixtures"]] == [1, 2]
     assert info["fixtures"][0]["status"] == "FINISHED"
+    assert info["fixtures"][0]["score"] == {"home": 2, "away": 1}
+    assert "score" not in info["fixtures"][1]  # 아직 안 끝난 경기는 score 필드 자체가 없음
 
 
 def test_build_daily_predictions_skips_failed_fixture_and_continues(monkeypatch):

@@ -75,6 +75,7 @@ def test_dashboard_default_view_aggregates_full_matchday_across_dates(client, mo
                     "home_team": "Manchester City FC",
                     "away_team": "Coventry City FC",
                     "status": "FINISHED",
+                    "score": {"home": 3, "away": 0},
                 },
                 {
                     "match_id": 2,
@@ -124,4 +125,5 @@ def test_dashboard_default_view_aggregates_full_matchday_across_dates(client, mo
     assert "Fulham FC" in resp.text
     assert "Arsenal FC" in resp.text
     assert "Coventry City FC" in resp.text
-    assert "경기 종료 · 예측 기록 없음" in resp.text
+    assert "3 : 0" in resp.text  # 예측 없는 종료 경기도 실제 스코어가 나와야 함
+    assert "사전 예측 없음" in resp.text

@@ -224,22 +224,39 @@ def _format_kickoff_kst(kickoff_utc: str) -> str:
 
 
 def _match_card_html(p: dict) -> str:
-    header = f"""<div class="match-time">{_format_kickoff_kst(p['kickoff_utc'])} <span class="tz">KST</span></div>
-  <div class="match-teams">
-    <span class="team">{p['home_team']}</span>
-    <span class="vs">vs</span>
-    <span class="team">{p['away_team']}</span>
-  </div>"""
+    score = p.get("score")
+    has_score = bool(score and score.get("home") is not None and score.get("away") is not None)
+
+    if has_score:
+        teams_html = (
+            f'<span class="team">{p["home_team"]}</span>'
+            f'<span class="score">{score["home"]} : {score["away"]}</span>'
+            f'<span class="team">{p["away_team"]}</span>'
+        )
+        time_suffix = ' <span class="ft-badge">종료</span>'
+    else:
+        teams_html = (
+            f'<span class="team">{p["home_team"]}</span>'
+            '<span class="vs">vs</span>'
+            f'<span class="team">{p["away_team"]}</span>'
+        )
+        time_suffix = ""
+
+    header = f"""<div class="match-time">{_format_kickoff_kst(p['kickoff_utc'])} <span class="tz">KST</span>{time_suffix}</div>
+  <div class="match-teams">{teams_html}</div>"""
 
     probs = p.get("probabilities")
     if probs is None:
-        body = f'<p class="no-pred">{p.get("no_prediction_reason", "예측 데이터 없음")}</p>'
-        return f'<div class="match-card no-pred-card">{header}{body}</div>'
+        reason = "사전 예측 없음" if has_score else p.get("no_prediction_reason", "예측 데이터 없음")
+        body = f'<p class="no-pred">{reason}</p>'
+        card_class = "match-card finished-card" if has_score else "match-card no-pred-card"
+        return f'<div class="{card_class}">{header}{body}</div>'
 
     home_pct = probs.get("HOME_TEAM", 0) * 100
     draw_pct = probs.get("DRAW", 0) * 100
     away_pct = probs.get("AWAY_TEAM", 0) * 100
-    body = f"""<div class="prob-bar">
+    prob_heading = '<div class="prob-heading">경기 전 예측</div>' if has_score else ""
+    body = f"""{prob_heading}<div class="prob-bar">
     <div class="prob-seg home" style="width:{home_pct:.1f}%"></div>
     <div class="prob-seg draw" style="width:{draw_pct:.1f}%"></div>
     <div class="prob-seg away" style="width:{away_pct:.1f}%"></div>
@@ -249,7 +266,8 @@ def _match_card_html(p: dict) -> str:
     <span class="prob-label draw">무 {draw_pct:.1f}%</span>
     <span class="prob-label away">원정승 {away_pct:.1f}%</span>
   </div>"""
-    return f'<div class="match-card">{header}{body}</div>'
+    card_class = "match-card finished-card" if has_score else "match-card"
+    return f'<div class="{card_class}">{header}{body}</div>'
 
 
 def _render_dashboard_html(
@@ -308,6 +326,10 @@ def _render_dashboard_html(
   .match-teams .vs {{ color: #c2c2d6; font-weight: 400; font-size: 0.8rem; margin: 0 6px; }}
   .match-teams .team {{ flex: 1; }}
   .match-teams .team:last-child {{ text-align: right; }}
+  .match-teams .score {{ font-weight: 700; color: #3a2a6d; padding: 0 8px; white-space: nowrap; }}
+  .ft-badge {{ background: #f0f0f5; color: #999; font-size: 0.65rem; padding: 1px 7px; border-radius: 999px; margin-left: 6px; }}
+  .prob-heading {{ font-size: 0.7rem; color: #b0b0c0; margin-bottom: 4px; }}
+  .finished-card {{ background: #fbfbfd; }}
   .prob-bar {{ display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #f0f0f5; margin-bottom: 8px; }}
   .prob-seg.home {{ background: #4f6bed; }}
   .prob-seg.draw {{ background: #c7c7d9; }}

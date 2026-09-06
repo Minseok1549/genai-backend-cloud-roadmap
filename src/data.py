@@ -100,14 +100,17 @@ def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
         (m for m in data["matches"] if m["matchday"] == matchday), key=lambda m: m["utcDate"]
     )
     dates = sorted({m["utcDate"][:10] for m in round_matches})
-    fixtures = [
-        {
+    fixtures = []
+    for m in round_matches:
+        fx = {
             "match_id": m["id"],
             "kickoff_utc": m["utcDate"],
             "home_team": m["homeTeam"]["name"],
             "away_team": m["awayTeam"]["name"],
             "status": m["status"],
         }
-        for m in round_matches
-    ]
+        if m["status"] == "FINISHED":
+            full_time = m.get("score", {}).get("fullTime", {})
+            fx["score"] = {"home": full_time.get("home"), "away": full_time.get("away")}
+        fixtures.append(fx)
     return {"matchday": matchday, "dates": dates, "fixtures": fixtures}

@@ -177,7 +177,7 @@ def _list_available_dates(limit: int = 14) -> list[str]:
         return []
 
 
-def _collect_matchday_predictions(dates: list[str]) -> tuple[list[dict], str | None]:
+def _collect_matchday_predictions(dates: list[str]) -> tuple[dict[int, dict], str | None]:
     """라운드가 걸쳐 있는 날짜들의 저장된 예측 파일을 모두 읽어 match_id 기준으로 합친다.
     하루짜리 배치 파일 하나만 보면 같은 라운드의 다른 날 경기가 빠지기 때문."""
     by_id: dict[int, dict] = {}
@@ -191,7 +191,30 @@ def _collect_matchday_predictions(dates: list[str]) -> tuple[list[dict], str | N
         generated_at = payload.get("generated_at")
         if generated_at and (latest_generated_at is None or generated_at > latest_generated_at):
             latest_generated_at = generated_at
-    return list(by_id.values()), latest_generated_at
+    return by_id, latest_generated_at
+
+
+NO_PREDICTION_REASONS = {
+    "FINISHED": "경기 종료 · 예측 기록 없음",
+    "POSTPONED": "경기 연기됨",
+    "CANCELLED": "경기 취소됨",
+    "SUSPENDED": "경기 중단됨",
+}
+
+
+def _merge_round_fixtures(fixtures: list[dict], predictions_by_id: dict[int, dict]) -> list[dict]:
+    """라운드 전체 경기 목록에, 저장된 예측이 있으면 확률을 붙이고 없으면 이유와 함께
+    None으로 남긴다 — 폼 데이터 부족으로 모델이 건너뛴 경기나 배치가 아직 안 돌았던
+    경기도 라운드에서 통째로 빠지지 않고 "왜 예측이 없는지"와 함께 보이게 하기 위해서다."""
+    merged = []
+    for fx in fixtures:
+        pred = predictions_by_id.get(fx["match_id"])
+        if pred:
+            merged.append({**fx, "probabilities": pred["probabilities"]})
+        else:
+            reason = NO_PREDICTION_REASONS.get(fx["status"], "예측 데이터 없음")
+            merged.append({**fx, "probabilities": None, "no_prediction_reason": reason})
+    return merged
 
 
 def _format_kickoff_kst(kickoff_utc: str) -> str:
@@ -201,18 +224,22 @@ def _format_kickoff_kst(kickoff_utc: str) -> str:
 
 
 def _match_card_html(p: dict) -> str:
-    probs = p.get("probabilities", {})
-    home_pct = probs.get("HOME_TEAM", 0) * 100
-    draw_pct = probs.get("DRAW", 0) * 100
-    away_pct = probs.get("AWAY_TEAM", 0) * 100
-    return f"""<div class="match-card">
-  <div class="match-time">{_format_kickoff_kst(p['kickoff_utc'])} <span class="tz">KST</span></div>
+    header = f"""<div class="match-time">{_format_kickoff_kst(p['kickoff_utc'])} <span class="tz">KST</span></div>
   <div class="match-teams">
     <span class="team">{p['home_team']}</span>
     <span class="vs">vs</span>
     <span class="team">{p['away_team']}</span>
-  </div>
-  <div class="prob-bar">
+  </div>"""
+
+    probs = p.get("probabilities")
+    if probs is None:
+        body = f'<p class="no-pred">{p.get("no_prediction_reason", "예측 데이터 없음")}</p>'
+        return f'<div class="match-card no-pred-card">{header}{body}</div>'
+
+    home_pct = probs.get("HOME_TEAM", 0) * 100
+    draw_pct = probs.get("DRAW", 0) * 100
+    away_pct = probs.get("AWAY_TEAM", 0) * 100
+    body = f"""<div class="prob-bar">
     <div class="prob-seg home" style="width:{home_pct:.1f}%"></div>
     <div class="prob-seg draw" style="width:{draw_pct:.1f}%"></div>
     <div class="prob-seg away" style="width:{away_pct:.1f}%"></div>
@@ -221,8 +248,8 @@ def _match_card_html(p: dict) -> str:
     <span class="prob-label home">홈승 {home_pct:.1f}%</span>
     <span class="prob-label draw">무 {draw_pct:.1f}%</span>
     <span class="prob-label away">원정승 {away_pct:.1f}%</span>
-  </div>
-</div>"""
+  </div>"""
+    return f'<div class="match-card">{header}{body}</div>'
 
 
 def _render_dashboard_html(
@@ -289,6 +316,8 @@ def _render_dashboard_html(
   .prob-label.home {{ color: #4f6bed; }}
   .prob-label.draw {{ color: #999; }}
   .prob-label.away {{ color: #e0526b; }}
+  .no-pred-card {{ opacity: 0.6; }}
+  .no-pred {{ color: #aaa; font-size: 0.82rem; margin: 10px 0 2px; }}
   .empty {{ color: #999; padding: 24px 0; }}
   .meta {{ color: #aaa; font-size: 0.78rem; margin-top: 20px; }}
 </style>
@@ -314,7 +343,8 @@ def dashboard(date: str | None = None):
         return _render_dashboard_html(date, payload, available_dates, active_date=date)
 
     matchday_info = load_matchday_info()
-    predictions, generated_at = _collect_matchday_predictions(matchday_info["dates"])
-    payload = {"predictions": predictions, "generated_at": generated_at} if predictions else None
+    predictions_by_id, generated_at = _collect_matchday_predictions(matchday_info["dates"])
+    merged = _merge_round_fixtures(matchday_info["fixtures"], predictions_by_id)
+    payload = {"predictions": merged, "generated_at": generated_at} if merged else None
     view_label = f"{matchday_info['matchday']}라운드" if matchday_info["matchday"] else "오늘"
     return _render_dashboard_html(view_label, payload, available_dates, active_date=None)

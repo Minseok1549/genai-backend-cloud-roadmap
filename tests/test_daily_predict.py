@@ -50,6 +50,8 @@ def test_load_matchday_info_returns_current_round_and_its_dates(tmp_path, monkey
     info = data_module.load_matchday_info(season=2026)
     assert info["matchday"] == 3
     assert info["dates"] == ["2026-09-04", "2026-09-06"]
+    assert [f["match_id"] for f in info["fixtures"]] == [1, 2]
+    assert info["fixtures"][0]["status"] == "FINISHED"
 
 
 def test_build_daily_predictions_skips_failed_fixture_and_continues(monkeypatch):

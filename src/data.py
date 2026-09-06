@@ -76,14 +76,17 @@ def load_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dic
 
 
 def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
-    """가장 임박한(아직 안 끝난 경기가 있는) matchday 번호와, 그 라운드에 속한 경기들이
-    걸쳐 있는 UTC 날짜 목록을 반환한다.
+    """가장 임박한(아직 안 끝난 경기가 있는) matchday 번호, 그 라운드가 걸쳐 있는 UTC 날짜
+    목록, 그리고 라운드에 속한 전체 경기 목록(상태 무관, FINISHED 포함)을 반환한다.
 
     EPL 한 라운드는 보통 목~월 여러 날짜에 걸쳐 열린다 — 대시보드가 날짜 하나만 보면
-    같은 라운드의 나머지 경기가 안 보이는 문제가 생겨서, 날짜 대신 matchday로 묶는다."""
+    같은 라운드의 나머지 경기가 안 보이는 문제가 생겨서, 날짜 대신 matchday로 묶는다.
+    fixtures를 상태와 무관하게 전부 담는 이유: 예측이 저장 안 된 경기(폼 데이터 부족으로
+    모델이 건너뛴 경기, 배치가 아직 안 돌았던 경기 등)도 "이 라운드에 있었다"는 사실은
+    대시보드에서 보여줘야 라운드 전체를 빠짐없이 확인할 수 있다."""
     path = RAW_DIR / f"matches_{season}.json"
     if not path.exists():
-        return {"matchday": None, "dates": []}
+        return {"matchday": None, "dates": [], "fixtures": []}
     data = json.loads(path.read_text())
     upcoming = [m for m in data["matches"] if m["status"] in UPCOMING_STATUSES]
     if upcoming:
@@ -92,6 +95,19 @@ def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
         finished = [m for m in data["matches"] if m.get("matchday") is not None]
         matchday = max((m["matchday"] for m in finished), default=None)
     if matchday is None:
-        return {"matchday": None, "dates": []}
-    dates = sorted({m["utcDate"][:10] for m in data["matches"] if m["matchday"] == matchday})
-    return {"matchday": matchday, "dates": dates}
+        return {"matchday": None, "dates": [], "fixtures": []}
+    round_matches = sorted(
+        (m for m in data["matches"] if m["matchday"] == matchday), key=lambda m: m["utcDate"]
+    )
+    dates = sorted({m["utcDate"][:10] for m in round_matches})
+    fixtures = [
+        {
+            "match_id": m["id"],
+            "kickoff_utc": m["utcDate"],
+            "home_team": m["homeTeam"]["name"],
+            "away_team": m["awayTeam"]["name"],
+            "status": m["status"],
+        }
+        for m in round_matches
+    ]
+    return {"matchday": matchday, "dates": dates, "fixtures": fixtures}

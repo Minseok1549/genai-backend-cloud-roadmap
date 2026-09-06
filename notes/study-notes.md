@@ -446,6 +446,24 @@ IAM 권한 없이 바로 GCS를 읽을 수 있었다. `?date=YYYY-MM-DD`로 지�
   UI를 카드형 레이아웃 + 확률 막대 그래프로 다시 디자인했다. 저장 스키마
   (`predictions/{UTC 날짜}.json`, 배치 실행 주기)는 안 건드렸다 — 문제는 조회/표시
   쪽에만 있었다.
+- **후속 — "예측 있는 경기만 모음"도 불완전했다**: matchday로 묶어도, 정작
+  폼 데이터 부족으로 모델이 스킵한 경기(승격팀 Coventry City/Hull City)와
+  배치가 아예 그 경기 킥오프 전에 한 번도 안 돌았던 경기(Ipswich vs Liverpool
+  — 첫 배치 실행이 09-05였는데 이 경기는 09-04 19:00 UTC 킥오프)는 "저장된
+  예측이 없다"는 이유로 여전히 라운드에서 통째로 빠졌다. 라운드 "전체 경기
+  목록"(상태 무관, `load_matchday_info`의 fixtures)을 기준으로 삼고, 예측이
+  있으면 확률을, 없으면 사유를 보여주도록 다시 고쳤다(`api._merge_round_fixtures`).
+  이어서 사용자가 "종료된 경기는 실제 결과도 보여달라"고 요청 — FINISHED 경기는
+  `score.fullTime`을 fixtures에 실어 실제 스코어를 표시하고, 예측이 남아있으면
+  스코어와 나란히 "경기 전 예측"이라는 라벨로 확률도 같이 보여준다.
+- **배포 이미지 정리 습관**: `gcloud run deploy --source .`는 배포마다 Artifact
+  Registry(`cloud-run-source-deploy` 저장소)에 새 이미지를 쌓기만 하고 오래된
+  것을 지우지 않는다 — 사용자 요청으로, 매 배포 후 방금 배포에 쓰인 digest만
+  남기고 나머지를 `gcloud artifacts docker images delete`로 지우는 걸 표준
+  절차로 삼는다(롤백 여지보다 저장 비용 최소화 우선). 지우기 전에 반드시
+  `gcloud run revisions describe --format="value(spec.containers[0].image)"`로
+  현재 서비스가 실제로 그 digest를 쓰고 있는지 확인하고 지운다.
+  쪽에만 있었다.
 - **문제 없음으로 확인된 것**: api.py 리팩터로 인한 에러 메시지·상태코드
   회귀 없음, `.env`는 3개 ignore 파일 모두에 있고 로그·API 응답에 시크릿
   노출 없음, db.py의 동시 저장 처리는 타당함.

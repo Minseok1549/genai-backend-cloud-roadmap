@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Backend to Cloud Bible</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#f2f0e6;
+  --surface:#ffffff;
+  --surface-2:#eae6d8;
+  --text:#1a1d1a;
+  --text-dim:#5c655c;
+  --border:#d9d5c7;
+  --accent:#1e6b3c;
+  --accent-ink:#ffffff;
+  --warn:#c8511b;
+  --danger:#b02a2a;
+  --code-bg:#12140f;
+  --code-text:#e9e6da;
+  --shadow: 0 1px 2px rgba(20,20,10,.06), 0 8px 24px rgba(20,20,10,.05);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12140f;
+    --surface:#191c15;
+    --surface-2:#1f231a;
+    --text:#e9e6da;
+    --text-dim:#9aa08f;
+    --border:#2b3025;
+    --accent:#4fae7a;
+    --accent-ink:#0b1410;
+    --warn:#e2833f;
+    --danger:#e2585a;
+    --code-bg:#0b0d09;
+    --code-text:#d9e6d9;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12140f;
+  --surface:#191c15;
+  --surface-2:#1f231a;
+  --text:#e9e6da;
+  --text-dim:#9aa08f;
+  --border:#2b3025;
+  --accent:#4fae7a;
+  --accent-ink:#0b1410;
+  --warn:#e2833f;
+  --danger:#e2585a;
+  --code-bg:#0b0d09;
+  --code-text:#d9e6d9;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:"Public Sans", -apple-system, sans-serif;
+  line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:840px;margin:0 auto;padding:0 24px 96px;}
+
+.hero{
+  padding:64px 24px 40px;
+  border-bottom:1px solid var(--border);
+  background:
+    repeating-linear-gradient(90deg, transparent, transparent 79px, var(--border) 79px, var(--border) 80px),
+    var(--surface);
+}
+.hero-inner{max-width:840px;margin:0 auto;}
+.eyebrow{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--accent);
+  display:flex;align-items:center;gap:8px;
+  margin-bottom:18px;
+}
+.eyebrow::before{content:"●";animation:pulse 2.4s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+@media (prefers-reduced-motion: reduce){.eyebrow::before{animation:none;}}
+h1{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:800;
+  font-size:clamp(2.6rem, 6vw, 4.4rem);
+  line-height:.94;
+  letter-spacing:-.01em;
+  margin:0 0 18px;
+  text-wrap:balance;
+  text-transform:uppercase;
+}
+h1 em{font-style:normal;color:var(--accent);}
+.dek{
+  font-size:1.08rem;
+  color:var(--text-dim);
+  max-width:64ch;
+  margin:0 0 28px;
+}
+.hero-meta{
+  display:flex;flex-wrap:wrap;gap:10px;
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.78rem;
+}
+.hero-meta span{
+  border:1px solid var(--border);
+  border-radius:999px;
+  padding:5px 12px;
+  color:var(--text-dim);
+}
+
+nav.toc{
+  max-width:840px;margin:0 auto;
+  padding:20px 24px;
+  display:flex;flex-wrap:wrap;gap:8px;
+  border-bottom:1px solid var(--border);
+  position:sticky;top:0;
+  background:var(--bg);
+  z-index:10;
+}
+nav.toc a{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.76rem;
+  color:var(--text);
+  text-decoration:none;
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:7px 11px;
+  background:var(--surface);
+  transition:border-color .15s, color .15s;
+}
+nav.toc a:hover{border-color:var(--accent);color:var(--accent);}
+nav.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+section{padding:56px 0 8px;border-bottom:1px solid var(--border);}
+section:last-of-type{border-bottom:none;}
+.sec-num{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.78rem;
+  color:var(--accent);
+  letter-spacing:.08em;
+}
+h2{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:700;
+  font-size:clamp(1.7rem, 3.4vw, 2.3rem);
+  text-transform:uppercase;
+  letter-spacing:-.005em;
+  margin:6px 0 20px;
+  text-wrap:balance;
+}
+h3{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:700;
+  font-size:1.28rem;
+  text-transform:uppercase;
+  letter-spacing:.01em;
+  margin:28px 0 10px;
+}
+p{margin:0 0 16px;max-width:70ch;}
+strong{font-weight:600;}
+a{color:var(--accent);}
+ul,ol{margin:0 0 16px;padding-left:1.3em;max-width:68ch;}
+li{margin-bottom:6px;}
+code{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.86em;
+  background:var(--surface-2);
+  padding:.12em .38em;
+  border-radius:4px;
+}
+
+.callout{
+  border:1px solid var(--border);
+  border-left:3px solid var(--accent);
+  background:var(--surface);
+  border-radius:6px;
+  padding:16px 18px;
+  margin:0 0 20px;
+  box-shadow:var(--shadow);
+}
+.callout.warn{border-left-color:var(--warn);}
+.callout p:last-child{margin-bottom:0;}
+.callout-label{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  color:var(--text-dim);
+  margin-bottom:8px;
+  display:block;
+}
+
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px;background:var(--border);
+  border:1px solid var(--border);
+  border-radius:8px;
+  overflow:hidden;
+  margin:0 0 22px;
+}
+.stat{background:var(--surface);padding:18px 16px;}
+.stat .n{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-size:2.1rem;font-weight:800;line-height:1;
+  color:var(--accent);
+  font-variant-numeric:tabular-nums;
+}
+.stat .l{font-size:.8rem;color:var(--text-dim);margin-top:6px;}
+
+.compare{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:.92rem;}
+.compare th,.compare td{
+  border:1px solid var(--border);
+  padding:10px 12px;
+  text-align:left;
+  vertical-align:top;
+}
+.compare th{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  background:var(--surface-2);
+  color:var(--text-dim);
+}
+.tblwrap{overflow-x:auto;margin-bottom:22px;}
+
+.tiers{display:flex;flex-direction:column;gap:10px;margin:0 0 22px;}
+.tier{
+  display:flex;gap:14px;align-items:flex-start;
+  border:1px solid var(--border);border-radius:8px;
+  padding:12px 14px;background:var(--surface);
+}
+.tier .badge{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.72rem;font-weight:600;
+  border-radius:5px;padding:4px 9px;white-space:nowrap;
+}
+.tier.ok .badge{background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);}
+.tier.ask .badge{background:color-mix(in srgb, var(--warn) 18%, transparent);color:var(--warn);}
+.tier.no .badge{background:color-mix(in srgb, var(--danger) 18%, transparent);color:var(--danger);}
+.tier div.txt{font-size:.92rem;color:var(--text-dim);}
+.tier div.txt strong{color:var(--text);}
+
+.pipeline{
+  display:flex;flex-wrap:wrap;gap:0;align-items:stretch;
+  margin:0 0 22px;
+}
+.pipeline .node{
+  flex:1 1 140px;
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:8px;
+  padding:14px 14px 16px;
+  position:relative;
+}
+.pipeline .node + .node{margin-left:22px;}
+.pipeline .node::before{
+  content:"→";
+  position:absolute;left:-22px;top:50%;transform:translateY(-50%);
+  color:var(--text-dim);font-size:1.1rem;
+}
+.pipeline .role{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent);display:block;margin-bottom:6px;
+}
+.pipeline .who{font-weight:700;margin-bottom:4px;}
+.pipeline .what{font-size:.85rem;color:var(--text-dim);}
+@media (max-width:640px){
+  .pipeline{flex-direction:column;}
+  .pipeline .node + .node{margin-left:0;margin-top:22px;}
+  .pipeline .node::before{content:"↓";left:50%;top:-20px;transform:translateX(-50%);}
+}
+
+.block{
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--surface);
+  box-shadow:var(--shadow);
+  padding:20px 22px 22px;
+  margin-bottom:20px;
+}
+.block-top{
+  display:flex;justify-content:space-between;align-items:baseline;
+  gap:12px;flex-wrap:wrap;
+  margin-bottom:10px;
+}
+.block-top h4{
+  font-family:"Big Shoulders Display", sans-serif;
+  font-weight:700;font-size:1.15rem;
+  text-transform:uppercase;margin:0;
+}
+.tag{
+  font-family:"IBM Plex Mono", monospace;
+  background:var(--accent);color:var(--accent-ink);
+  font-size:.75rem;font-weight:600;
+  border-radius:5px;padding:4px 10px;
+  white-space:nowrap;
+}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:.9rem;margin-bottom:12px;}
+.kv dt{
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-dim);padding-top:2px;
+}
+.kv dd{margin:0;}
+
+pre{
+  background:var(--code-bg);color:var(--code-text);
+  border-radius:8px;padding:14px 16px;
+  overflow-x:auto;
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.82rem;line-height:1.55;
+  margin:0 0 20px;
+}
+pre .c{color:#8a9a86;}
+
+.checklist{list-style:none;padding-left:0;margin:0 0 22px;}
+.checklist li{
+  display:flex;gap:10px;align-items:flex-start;
+  padding:10px 0;border-bottom:1px dashed var(--border);
+  max-width:none;
+}
+.checklist li:last-child{border-bottom:none;}
+.checklist li::before{
+  content:"☐";color:var(--accent);font-size:1.1rem;line-height:1.3;flex-shrink:0;
+}
+
+.sources{font-size:.86rem;}
+.sources li{margin-bottom:10px;color:var(--text-dim);}
+
+footer{
+  max-width:840px;margin:0 auto;padding:40px 24px 60px;
+  color:var(--text-dim);font-size:.82rem;
+  font-family:"IBM Plex Mono", monospace;
+}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow">Reference Bible · 2026-09-06</span>
+    <h1>Backend → Cloud<br><em>Bible</em></h1>
+    <p class="dek">EPL 예측 서비스를 만들면서 실제로 부딪힌 백엔드~클라우드~MLOps 개념을, 처음 보는 사람도 이해할 수 있게 정리했다. 다음에 다른 Gen AI 기반 프로젝트를 처음부터 만들 때, 이 문서 하나만 다시 펴보면 같은 구조를 재현할 수 있는 것이 목표다.</p>
+    <div class="hero-meta">
+      <span>난이도 초심자</span>
+      <span>근거 이 프로젝트 실제 코드</span>
+      <span>원칙 벤더 중립 우선</span>
+      <span>범위 API ~ 배치 ~ 배포 ~ MLOps</span>
+    </div>
+  </div>
+</div>
+
+<nav class="toc">
+  <a href="#usage">00 · 사용법</a>
+  <a href="#api-layer">01 · API 뼈대</a>
+  <a href="#caching">02 · 캐싱</a>
+  <a href="#batch-vs-service">03 · 배치 vs 서비스</a>
+  <a href="#source-of-truth">04 · 진실 원천</a>
+  <a href="#database">05 · DB 연결</a>
+  <a href="#logging">06 · 로깅</a>
+  <a href="#deploy">07 · 배포</a>
+  <a href="#secrets">08 · 비밀값</a>
+  <a href="#mlops">09 · MLOps</a>
+  <a href="#genai-next">10 · Gen AI 확장</a>
+  <a href="#checklist">체크리스트</a>
+</nav>
+
+<div class="wrap">
+
+<section id="usage">
+  <span class="sec-num">00</span>
+  <h2>이 문서를 읽는 법</h2>
+  <p>여기 나오는 개념은 전부 이 프로젝트(<code>genai-backend-cloud-roadmap</code>)를 만드는 과정에서 실제로 필요했던 것들이다. 교과서처럼 순서대로 다 외울 필요는 없고, 다음에 비슷한 서비스를 만들 때 "이건 저번에 어떻게 했더라" 싶은 순간 이 페이지로 돌아와 해당 장만 다시 읽으면 된다.</p>
+  <p>각 장은 세 가지를 항상 같이 말한다 — <strong>이게 왜 필요한가</strong>(문제 상황), <strong>이 프로젝트에서 어떻게 썼는가</strong>(실제 코드), <strong>다른 클라우드에서는 뭐라고 부르는가</strong>(벤더 중립 대응표). 마지막 항목을 넣은 이유는, "배포해봤다"와 "이해했다"는 다르기 때문이다 — 특정 클라우드의 명령어를 외우는 것과, 그 명령어가 풀고 있는 일반적인 문제를 아는 것은 별개의 능력이다.</p>
+</section>
+
+<section id="api-layer">
+  <span class="sec-num">01</span>
+  <h2>API 서버의 뼈대 — FastAPI 레이어</h2>
+  <p>백엔드 서버가 하는 일은 결국 "요청을 받아서 뭔가 하고 응답한다"인데, 그 사이에 끼워야 하는 것들이 있다. 이 프로젝트의 <code>/predict</code> 엔드포인트 하나에 그게 다 들어있다.</p>
+  <div class="tiers">
+    <div class="tier ok">
+      <span class="badge">검증</span>
+      <div class="txt"><strong>Pydantic 모델</strong>로 요청 본문의 타입·길이를 서버 로직 진입 전에 걸러낸다. 홈팀/원정팀 이름이 비어있거나 너무 길면 여기서 400으로 끝난다 — 그 뒤 코드는 "값이 정상"이라는 전제를 믿고 짤 수 있다.</div>
+    </div>
+    <div class="tier ok">
+      <span class="badge">수명주기</span>
+      <div class="txt"><strong>lifespan 이벤트</strong>로 서버가 뜰 때 모델 파일과 DB 커넥션 풀을 한 번만 준비한다. 요청마다 모델을 다시 읽으면 느리고, 아예 안 읽어놓으면 첫 요청에서야 실패를 발견한다.</div>
+    </div>
+    <div class="tier ask">
+      <span class="badge">부분 장애</span>
+      <div class="txt">DB가 죽어 있어도 서버 전체가 죽으면 안 된다. <strong>예측 응답은 그대로 내려주고, 기록 저장만 실패로 로그를 남긴다</strong> — 부가 기능(감사 기록)과 핵심 기능(예측)의 장애를 분리하는 것이 이 판단의 기준이다.</div>
+    </div>
+  </div>
+  <pre><span class="c"># lifespan: 기동 시점에 한 번, 실패하면 바로 죽는 것과 조용히 넘어가는 것을 구분한다</span>
+app.state.model_bundle = load_model_bundle(MODEL_PATH)  # 없으면 기동 자체를 실패시킨다
+
+try:
+    app.state.db_pool = db.create_pool()
+except Exception:
+    app.state.db_pool = None  # DB 없이도 /health, /predict는 계속 서빙</pre>
+  <p>미들웨어에서는 요청마다 <code>X-Request-ID</code>를 붙이고 응답 시간을 구조화 로그로 남긴다. 이건 06장(로깅)에서 더 자세히 다룬다.</p>
+</section>
+
+<section id="caching">
+  <span class="sec-num">02</span>
+  <h2>외부 API는 반드시 캐싱한다</h2>
+  <p>이 서비스는 football-data.org라는 외부 API에서 경기 데이터를 받아온다. 무료 티어는 분당 호출 횟수 제한이 있어서, 요청이 들어올 때마다 외부 API를 부르면 금방 막힌다. 그래서 로컬 JSON 파일에 캐싱하고, <strong>완결된 시즌은 영원히 안 바뀌니 한 번만 받고, 진행 중인 시즌만 일정 시간(6시간)마다 다시 받는다</strong> — 데이터의 성격에 따라 캐시 정책을 다르게 가져가는 것이 핵심이다.</p>
+  <div class="callout">
+    <span class="callout-label">실전에서 배운 것</span>
+    <p>캐시 파일을 쓰는 도중에 다른 요청이 그 파일을 읽으면 깨진 JSON을 보게 된다. 그래서 <strong>임시 파일에 먼저 쓰고 <code>os.replace()</code>로 원자적으로 교체</strong>한다 — 운영체제 수준에서 "전부 바뀌거나 전혀 안 바뀌거나" 둘 중 하나만 보이게 보장해주는 연산이라, 절반만 쓰인 파일을 읽는 경우가 없다.</p>
+  </div>
+  <pre>tmp_path.write_text(json.dumps(data))
+os.replace(tmp_path, out_path)  <span class="c"># 두 줄이지만, 동시성 버그를 막는 핵심</span></pre>
+  <p>그리고 받아온 응답을 캐시에 쓰기 전에 <strong>스키마를 검증</strong>한다(점수 필드가 있는지, winner 값이 정상 범위인지). 검증에서 걸리면 기존 캐시를 그대로 두고 실패시킨다 — 손상된 데이터가 캐시에 들어가면, 그걸 읽는 모든 이후 요청이 이유도 모른 채 500 에러를 내기 때문이다.</p>
+</section>
+
+<section id="batch-vs-service">
+  <span class="sec-num">03</span>
+  <h2>배치와 서비스는 다른 세계에 산다</h2>
+  <p>이 프로젝트에서 가장 비직관적이었던 함정이다. "매일 예측을 계산하는 배치 작업"과 "사용자 요청을 받는 API 서버"를 같은 코드베이스, 같은 컨테이너 이미지로 만들어도, <strong>Cloud Run Job과 Cloud Run Service는 완전히 별개의 컨테이너 인스턴스</strong>로 뜬다. 배치가 로컬 디스크에 써놓은 캐시 파일은 서비스 컨테이너에서 절대 보이지 않는다 — 디스크를 공유하지 않기 때문이다.</p>
+  <div class="pipeline">
+    <div class="node"><span class="role">Trigger</span><div class="who">Cloud Scheduler</div><div class="what">하루 한 번, 정해진 시각에 Job 실행을 요청</div></div>
+    <div class="node"><span class="role">Batch</span><div class="who">Cloud Run Job</div><div class="what">실행마다 새 컨테이너, 끝나면 사라짐. 로컬 디스크는 그 실행 안에서만 유효</div></div>
+    <div class="node"><span class="role">Serve</span><div class="who">Cloud Run Service</div><div class="what">항상 떠 있는(또는 요청마다 뜨는) 별도 컨테이너. Job의 로컬 디스크를 볼 수 없음</div></div>
+  </div>
+  <div class="callout warn">
+    <span class="callout-label">실제로 겪은 버그</span>
+    <p>대시보드가 종료된 경기의 스코어를 안 보여주는 문제가 있었다. 원인은 대시보드 라우트가 로컬 캐시 파일을 읽기만 하고 <strong>갱신은 <code>/predict</code> 라우트에서만 트리거</strong>됐던 것 — 아무도 <code>/predict</code>를 안 부르면 서비스 컨테이너의 캐시는 기동 시점에 멈춰 있었다. 고친 방법은 대시보드 라우트에도 같은 캐시 갱신 호출을 추가한 것이다. "배치가 데이터를 갱신했으니 서비스도 알겠지"는 서로 다른 컨테이너 사이에서는 틀린 가정이다.</p>
+  </div>
+  <div class="tblwrap">
+    <table class="compare">
+      <tr><th>역할</th><th>GCP (이 프로젝트)</th><th>AWS</th><th>Azure</th></tr>
+      <tr><td>일회성/주기 배치 실행</td><td>Cloud Run Job</td><td>ECS Scheduled Task / Fargate Task</td><td>Container Apps Job</td></tr>
+      <tr><td>정기 트리거</td><td>Cloud Scheduler</td><td>EventBridge Scheduler</td><td>Logic Apps Timer / Scheduler</td></tr>
+      <tr><td>상시 서빙 서비스</td><td>Cloud Run Service</td><td>ECS Service / App Runner</td><td>Container Apps (외부 인그레스)</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="source-of-truth">
+  <span class="sec-num">04</span>
+  <h2>여러 컨테이너가 공유할 진실은 객체 스토리지에</h2>
+  <p>배치와 서비스가 디스크를 공유하지 않는다면, 배치가 계산한 결과(그날의 예측)를 서비스가 어떻게 읽을까? 답은 <strong>둘 다 접근 가능한 외부 저장소</strong>다. 이 프로젝트는 배치가 매일 계산한 예측을 GCS(객체 스토리지)에 <code>predictions/{날짜}.json</code>으로 올리고, 서비스는 요청이 올 때마다 그 파일을 읽는다.</p>
+  <p>여기서 얻은 원칙: <strong>인스턴스 로컬 디스크는 "이번 실행에서만 쓰는 임시 작업 공간"으로만 쓰고, 다음에 누군가(다른 실행, 다른 서비스)가 읽어야 하는 값은 반드시 로컬 밖으로 내보낸다.</strong> 이건 Cloud Run뿐 아니라 컨테이너 기반 아키텍처 전반에 적용되는 규칙이다.</p>
+  <div class="tblwrap">
+    <table class="compare">
+      <tr><th>역할</th><th>GCP</th><th>AWS</th><th>Azure</th></tr>
+      <tr><td>객체 스토리지(스냅샷 저장)</td><td>Cloud Storage (GCS)</td><td>S3</td><td>Blob Storage</td></tr>
+      <tr><td>컨테이너 이미지 저장소</td><td>Artifact Registry</td><td>ECR</td><td>Container Registry (ACR)</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="database">
+  <span class="sec-num">05</span>
+  <h2>DB는 선택적 의존성으로 다룬다</h2>
+  <p>Postgres에 <code>psycopg2</code>로 접속해서 예측 기록(감사 추적용)을 남긴다. 커넥션은 매번 새로 열지 않고 <strong>커넥션 풀</strong>을 기동 시점에 하나 만들어 재사용한다 — 매 요청마다 TCP 연결을 새로 맺는 비용을 없애기 위해서다.</p>
+  <p>중요한 설계 판단은 01장에서 이미 나왔다: <strong>DB는 예측 기능의 필수 조건이 아니라 부가 기록 기능의 필수 조건</strong>이다. 그래서 기동 시점 DB 연결 실패, 요청 처리 중 저장 실패 모두 로그만 남기고 예측 응답 자체는 정상적으로 내려준다. "이 의존성이 없으면 무엇까지 포기해도 되는가"를 먼저 정하고 코드를 짜는 순서가 반대로 되면, 사소한 부가 기능 장애가 핵심 기능까지 끌고 내려가는 설계가 나온다.</p>
+</section>
+
+<section id="logging">
+  <span class="sec-num">06</span>
+  <h2>로그는 기계가 먼저 읽는다 — 구조화 로깅</h2>
+  <p>사람이 눈으로 훑는 텍스트 로그 대신, <strong>JSON 한 줄에 필드를 담아</strong> 남긴다(<code>log_json("warning", "메시지", fixture_id=..., error=...)</code> 형태). 이렇게 하면 나중에 "왜 이 세 경기만 예측이 빠졌지?"를 조사할 때, 로그 검색 도구에서 <code>jsonPayload.message="daily prediction skipped for fixture"</code>처럼 필드 기준으로 정확히 걸러낼 수 있다. 실제로 이 방식 덕분에 대시보드에서 3경기가 빠진 원인(폼 기록 부족으로 모델이 건너뜀)을 로그 검색 한 번으로 찾아냈다.</p>
+  <p>미들웨어에서 요청마다 <code>X-Request-ID</code>를 발급하고 모든 로그 줄에 함께 남기는 것도 같은 이유다 — 요청 하나가 여러 로그 줄을 남길 때, 그 줄들을 하나로 묶어 추적하려면 공통 식별자가 있어야 한다.</p>
+  <div class="tblwrap">
+    <table class="compare">
+      <tr><th>역할</th><th>GCP</th><th>AWS</th><th>Azure</th></tr>
+      <tr><td>로그 수집/검색</td><td>Cloud Logging</td><td>CloudWatch Logs</td><td>Azure Monitor / Log Analytics</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="deploy">
+  <span class="sec-num">07</span>
+  <h2>배포는 "이미지 하나를 새로 쌓는" 일이다</h2>
+  <p><code>gcloud run deploy --source .</code> 한 번이 하는 일: 소스 코드를 컨테이너 이미지로 빌드 → 그 이미지를 Artifact Registry(이미지 저장소)에 올림 → 새 리비전을 만들어 트래픽을 그쪽으로 전환. 여기서 놓치기 쉬운 것: <strong>배포할 때마다 이전 이미지가 저장소에서 자동으로 지워지지 않는다.</strong> 배포를 반복할수록 다이제스트(이미지 버전)가 계속 쌓이고, 스토리지 비용도 함께 늘어난다.</p>
+  <div class="callout">
+    <span class="callout-label">이 프로젝트의 규칙</span>
+    <p>배포 후에는 항상 <strong>현재 실제로 트래픽을 받는 리비전의 이미지 다이제스트를 먼저 확인</strong>하고(<code>gcloud run revisions describe ... --format="value(spec.containers[0].image)"</code>), 그 다이제스트를 제외한 나머지를 지운다. 순서를 바꿔서 확인 없이 지우면, 서비스 중인 이미지를 실수로 지울 수 있다.</p>
+  </div>
+  <pre>gcloud run revisions describe &lt;revision&gt; --region=... \
+  --format="value(spec.containers[0].image)"   <span class="c"># 1. 지금 쓰는 다이제스트 확인</span>
+
+gcloud artifacts docker images delete &lt;image&gt;@&lt;다른 다이제스트&gt; \
+  --quiet --delete-tags                         <span class="c"># 2. 확인 후에만 나머지 삭제</span></pre>
+  <div class="tblwrap">
+    <table class="compare">
+      <tr><th>역할</th><th>GCP</th><th>AWS</th><th>Azure</th></tr>
+      <tr><td>버전 단위 배포 이력</td><td>Revision (Cloud Run)</td><td>Task Definition Revision (ECS)</td><td>Revision (Container Apps)</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="secrets">
+  <span class="sec-num">08</span>
+  <h2>비밀값은 코드가 아니라 환경이 쥔다</h2>
+  <p>API 키, DB 비밀번호 같은 값은 코드에 절대 하드코딩하지 않는다. 이 프로젝트의 규칙: <strong>운영 환경(Cloud Run)에서는 환경변수로 주입받고, 로컬 개발에서만 <code>.env</code> 파일을 fallback으로 읽는다.</strong> <code>.env</code>는 <code>.gitignore</code>에 반드시 포함시켜 git 이력에 절대 들어가지 않게 한다.</p>
+  <pre>env_key = os.environ.get("FOOTBALL_DATA_API_KEY")
+if env_key:
+    return env_key
+<span class="c"># 배포 환경엔 .env가 없으니, 여기 도달하면 로컬 개발 중이라는 뜻</span></pre>
+  <p>다음 장에서 다룰 Gen AI API 키(Gemini)도 같은 규칙을 그대로 따른다 — Cloud Run 서비스의 환경변수(또는 Secret Manager)로 등록하고, 로그에는 절대 값 자체를 남기지 않는다.</p>
+</section>
+
+<section id="mlops">
+  <span class="sec-num">09</span>
+  <h2>MLOps의 최소 단위 — 버전, 멱등성, 격리</h2>
+  <p>"MLOps"라고 하면 거창하게 들리지만, 이 프로젝트에서 실제로 지킨 건 네 가지 습관뿐이다.</p>
+  <div class="block">
+    <div class="block-top"><h4>모델·데이터 버전 기록</h4><span class="tag">감사 추적</span></div>
+    <p>예측 결과마다 <code>model_version</code>(어느 모델로 계산했는지)과 <code>data_version</code>(어느 시점까지의 경기 데이터를 반영했는지)을 함께 저장한다. 나중에 "이 예측이 왜 이렇게 나왔지?"를 재현하려면, 결과값뿐 아니라 그걸 만든 조건도 같이 남아있어야 한다.</p>
+  </div>
+  <div class="block">
+    <div class="block-top"><h4>실패 하나가 배치 전체를 막지 않는다</h4><span class="tag">격리</span></div>
+    <p>승격팀처럼 폼 기록이 부족한 경기 하나가 예측에 실패해도, 그 경기만 건너뛰고 나머지 경기 예측은 계속 진행한다. 배치 작업에서 "부분 실패"와 "전체 실패"를 구분하지 않으면, 경기 하나의 데이터 결함이 그날 전체 대시보드를 텅 비게 만든다.</p>
+  </div>
+  <div class="block">
+    <div class="block-top"><h4>같은 배치를 다시 돌려도 안전하게(멱등성)</h4><span class="tag">재실행 안전</span></div>
+    <p>배치가 오전, 오후 두 번 돌아도 오전에 기록한 예측이 사라지면 안 된다. 그래서 새 결과와 기존 저장값을 <code>match_id</code> 기준으로 병합하고, 겹치는 경기만 새 값으로 덮어쓴다 — 재실행이 데이터를 망가뜨리지 않는다는 것을 보장하는 가장 기본적인 패턴이다.</p>
+  </div>
+  <div class="block">
+    <div class="block-top"><h4>외부 의존성은 테스트에서 가짜로 바꾼다</h4><span class="tag">결정론적 테스트</span></div>
+    <p>GCS, DB, 실제 모델 파일을 실제로 부르면 테스트가 느리고 네트워크에 따라 결과가 흔들린다. <code>monkeypatch</code>로 이런 외부 호출을 가짜 함수로 바꿔치기해서, "이 로직이 이 입력에서 이 출력을 내는가"만 빠르고 항상 같은 결과로 검증한다.</p>
+  </div>
+</section>
+
+<section id="genai-next">
+  <span class="sec-num">10</span>
+  <h2>다음 레이어 — Gen AI를 어디에 끼울 것인가</h2>
+  <p>대시보드에 경기별 프리뷰(선수 현황, 상대 전적, 이슈 요약)를 Gen AI로 붙이기로 했다. 여기서도 위에서 배운 원칙이 그대로 적용된다: <strong>LLM 호출은 비용이 실제로 드는 외부 API 호출</strong>이므로, 캐싱 원칙(02장)과 배치/서비스 분리 원칙(03장)을 그대로 가져온다.</p>
+  <div class="tiers">
+    <div class="tier no">
+      <span class="badge">채택 안 함</span>
+      <div class="txt"><strong>실시간 생성</strong> — 사용자가 대시보드를 열 때마다 LLM을 호출하면, 트래픽만큼 비용이 늘고 페이지 로딩도 느려진다.</div>
+    </div>
+    <div class="tier ok">
+      <span class="badge">채택함</span>
+      <div class="txt"><strong>배치 생성 + 캐시 서빙</strong> — 하루 배치 작업이 그날 대상 경기마다 딱 한 번씩 LLM을 호출해 결과를 GCS에 저장한다(04장의 "진실 원천" 패턴 재사용). 대시보드는 그 결과를 읽기만 하므로 비용이 "경기 수 × 1회"로 고정되고 예측 가능하다.</div>
+    </div>
+  </div>
+  <p>모델은 비용 때문에 Gemini로 정했다. 어떤 LLM을 쓰든 이 배치-생성/캐시-서빙 구조 자체는 바뀌지 않는다 — API 키만 바뀔 뿐이고, 그 키를 다루는 규칙은 08장과 동일하다.</p>
+</section>
+
+<section id="checklist">
+  <span class="sec-num">✓</span>
+  <h2>다음 Gen AI 프로젝트에 그대로 옮길 체크리스트</h2>
+  <ul class="checklist">
+    <li>외부 API를 부르는 곳마다: 캐시가 있는가, TTL이 데이터 성격에 맞는가, 쓰기가 원자적인가</li>
+    <li>배치(Job)와 서비스(Service)가 나뉘어 있다면: 배치가 만든 결과를 서비스가 읽는 경로가 로컬 디스크가 아니라 객체 스토리지인가</li>
+    <li>핵심 기능과 부가 기능(로깅, 기록 저장 등)의 장애를 분리했는가 — 부가 기능이 죽어도 핵심은 응답하는가</li>
+    <li>로그가 사람이 눈으로 읽는 텍스트가 아니라, 필드로 검색 가능한 구조화 로그인가</li>
+    <li>배포 후 이전 컨테이너 이미지를 정리하는 습관이 있는가(현재 사용 중인 다이제스트 확인 → 나머지 삭제)</li>
+    <li>비밀값이 코드나 git 이력이 아니라 환경변수/Secret Manager에만 있는가</li>
+    <li>배치를 다시 돌려도 기존 데이터가 유실되지 않는가(멱등적 병합)</li>
+    <li>LLM 호출처럼 비용이 실제로 드는 작업은, 요청마다가 아니라 배치로 한 번만 계산하고 캐시로 서빙하는가</li>
+    <li>테스트가 외부 의존성(DB, 스토리지, 실제 모델) 없이도 결정론적으로 돌아가는가</li>
+  </ul>
+</section>
+
+</div>
+
+<footer>
+  genai-backend-cloud-roadmap · notes/backend-cloud-mlops-bible.html · 이 프로젝트의 실제 코드와 배포 이력을 근거로 작성
+</footer>
+
+</body>
+</html>

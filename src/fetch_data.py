@@ -42,7 +42,10 @@ def fetch_season(season: int, api_key: str) -> dict:
         params={"season": season},
         timeout=30,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        raise requests.HTTPError(
+            f"{resp.status_code} {resp.reason} for url {resp.url}: {resp.text[:500]}", response=resp
+        )
     return resp.json()
 
 

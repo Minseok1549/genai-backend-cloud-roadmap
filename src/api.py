@@ -246,6 +246,7 @@ def _safe_url(url: str) -> str:
 
 
 _TAG_SLUGS = {"부상": "injury", "폼": "form", "전술": "tactics", "주심": "referee", "기타": "other"}
+_TAG_ICONS = {"부상": "🩹", "폼": "📈", "전술": "♟️", "주심": "🟨", "기타": "💡"}
 
 
 def _sources_html(sources: list[dict]) -> str:
@@ -259,11 +260,12 @@ def _sources_html(sources: list[dict]) -> str:
 
 
 def _points_html(points: list[dict]) -> str:
-    """핵심 포인트를 기존 승부 예측 서비스처럼 태그 칩 + 짧은 한 줄 리스트로 렌더링한다
-    — Gemini가 통으로 뽑아주는 긴 문단을 그대로 꽂으면 카드마다 줄글이 늘어져 플랫폼
-    서비스보다는 블로그 포스트처럼 보인다."""
+    """핵심 포인트를 기존 승부 예측 서비스(SofaScore AI Insights 등)처럼 태그별 독립
+    카드 그리드로 렌더링한다 — 세로로 늘어선 리스트보다 한눈에 카테고리별로 스캔하기
+    쉽고, 줄글 문단보다 플랫폼 서비스에 가까운 인상을 준다."""
     items = "".join(
-        f'<li class="ai-point"><span class="ai-tag ai-tag-{_TAG_SLUGS.get(p["tag"], "other")}">{html.escape(p["tag"])}</span>'
+        f'<li class="ai-point ai-point-{_TAG_SLUGS.get(p["tag"], "other")}">'
+        f'<span class="ai-tag">{_TAG_ICONS.get(p["tag"], "💡")} {html.escape(p["tag"])}</span>'
         f'<span class="ai-point-text">{html.escape(p["text"])}</span></li>'
         for p in points
     )
@@ -271,14 +273,21 @@ def _points_html(points: list[dict]) -> str:
 
 
 def _ai_details_html(label: str, headline: str | None, points: list[dict] | None, prose_text: str | None, sources: list[dict]) -> str:
-    """headline/points(신규 저장 형식)가 있으면 칩+리스트로, 없으면 과거에 저장된
-    문단 텍스트(prose_text)로 폴백 렌더링한다 — GCS에 이미 구버전 형식으로 저장된
-    과거 예측 기록도 계속 보여야 하기 때문."""
+    """headline은 카드에서 바로 보이는 한 줄 총평으로(탭 없이), points는 태그별 카드
+    그리드로 접어서(details) 렌더링한다 — 없으면 과거에 저장된 문단 텍스트(prose_text)로
+    폴백 렌더링한다. GCS에 이미 구버전 형식으로 저장된 과거 예측 기록도 계속 보여야
+    하기 때문."""
     if headline or points:
-        body_html = (f'<p class="ai-headline">{html.escape(headline)}</p>' if headline else "") + (
-            _points_html(points) if points else ""
+        headline_html = (
+            f'<div class="ai-teaser"><span class="ai-badge">AI</span>'
+            f'<p class="ai-headline">{html.escape(headline)}</p></div>'
+            if headline else ""
         )
+        if not points:
+            return headline_html
+        body_html = _points_html(points)
     elif prose_text:
+        headline_html = ""
         # text/reasoning은 Gemini가 생성한 텍스트라 html.escape 없이 그대로 꽂으면 삽입된
         # HTML/스크립트가 대시보드에서 그대로 실행될 수 있다(모델이 마크업을 흉내 내는
         # 경우가 실제로 있다).
@@ -286,6 +295,7 @@ def _ai_details_html(label: str, headline: str | None, points: list[dict] | None
     else:
         return ""
     return (
+        f'{headline_html}'
         '<details class="ai-report">'
         f'<summary class="ai-report-label">{label}</summary>'
         f'<div class="ai-report-body">{body_html}</div>'
@@ -303,7 +313,7 @@ def _report_html(report: dict | str | None) -> str:
     # 카드마다 리포트 길이가 들쭉날쭉해 그리드가 깨지는 걸 막기 위해 기본은 접어두고,
     # 근거 링크를 같이 보여줘 "AI가 최신 정보를 반영했다"는 말을 사용자가 직접 검증할 수 있게 한다.
     return _ai_details_html(
-        "AI 프리뷰 (탭하여 펼치기)",
+        "근거 상세 보기",
         report.get("headline"),
         report.get("points"),
         report.get("text"),
@@ -341,7 +351,7 @@ def _genai_block_html(genai: dict, heading: str = "GenAI 예측 (최신 뉴스 �
     미공개)에서는 heading을 다르게 줘서 "이게 유일한 예측"이라는 걸 구분해준다."""
     bar_html = _prob_bar_html(genai["probabilities"], heading)
     reasoning_html = _ai_details_html(
-        "GenAI 예측 근거 (탭하여 펼치기)",
+        "근거 상세 보기",
         genai.get("headline"),
         genai.get("points"),
         genai.get("reasoning"),
@@ -547,19 +557,32 @@ def _render_dashboard_html(
   .ai-report[open] .ai-report-label::after {{ content: "▴"; }}
   .ai-report-body {{ line-height: 1.6; color: var(--text-dim); margin-top: 9px; }}
   .ai-report-prose {{ line-height: 1.6; color: var(--text-dim); }}
-  .ai-headline {{ margin: 0 0 10px; font-weight: 700; color: var(--text); line-height: 1.45; }}
-  .ai-points {{ list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }}
-  .ai-point {{ display: flex; align-items: baseline; gap: 8px; }}
-  .ai-point-text {{ color: var(--text-dim); line-height: 1.5; }}
-  .ai-tag {{
-    flex-shrink: 0; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.01em;
-    padding: 2px 8px; border-radius: 999px; background: var(--surface-2);
-    color: var(--text-faint); border: 1px solid var(--border);
+  .ai-teaser {{ display: flex; align-items: baseline; gap: 8px; margin: 12px 0 0; }}
+  .ai-badge {{
+    flex-shrink: 0; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.04em;
+    padding: 2px 6px; border-radius: 5px; background: rgba(139, 123, 255, 0.16);
+    color: var(--brand); border: 1px solid rgba(139, 123, 255, 0.35);
   }}
-  .ai-tag-injury {{ color: var(--away); border-color: rgba(239, 92, 138, 0.35); }}
-  .ai-tag-form {{ color: var(--home); border-color: rgba(91, 141, 239, 0.35); }}
-  .ai-tag-tactics {{ color: #d8a44c; border-color: rgba(216, 164, 76, 0.35); }}
-  .ai-tag-referee {{ color: var(--win); border-color: rgba(52, 211, 153, 0.35); }}
+  .ai-headline {{ margin: 0; font-weight: 700; color: var(--text); line-height: 1.4; font-size: 0.86rem; }}
+  .ai-points {{
+    list-style: none; margin: 0; padding: 0; display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
+  }}
+  .ai-point {{
+    display: flex; flex-direction: column; gap: 5px; background: var(--surface-2);
+    border: 1px solid var(--border); border-left: 3px solid var(--text-faint);
+    border-radius: 8px; padding: 9px 11px;
+  }}
+  .ai-point-text {{ color: var(--text-dim); line-height: 1.5; font-size: 0.8rem; }}
+  .ai-tag {{ font-size: 0.66rem; font-weight: 700; letter-spacing: 0.01em; color: var(--text-faint); }}
+  .ai-point-injury {{ border-left-color: var(--away); }}
+  .ai-point-injury .ai-tag {{ color: var(--away); }}
+  .ai-point-form {{ border-left-color: var(--home); }}
+  .ai-point-form .ai-tag {{ color: var(--home); }}
+  .ai-point-tactics {{ border-left-color: #d8a44c; }}
+  .ai-point-tactics .ai-tag {{ color: #d8a44c; }}
+  .ai-point-referee {{ border-left-color: var(--win); }}
+  .ai-point-referee .ai-tag {{ color: var(--win); }}
   .ai-report-sources {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }}
   .ai-report-sources li {{ display: contents; }}
   .ai-report-sources a {{

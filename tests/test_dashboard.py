@@ -144,8 +144,9 @@ def test_dashboard_renders_ai_report_as_headline_and_tagged_points(client, monke
     resp = client.get("/dashboard?date=2026-09-06")
     assert resp.status_code == 200
     assert '<p class="ai-headline">홈팀이 근소하게 유리</p>' in resp.text
-    assert '<span class="ai-tag ai-tag-injury">부상</span>' in resp.text
-    assert '<span class="ai-tag ai-tag-form">폼</span>' in resp.text
+    assert 'class="ai-point ai-point-injury"' in resp.text
+    assert 'class="ai-point ai-point-form"' in resp.text
+    assert "부상" in resp.text and "폼" in resp.text
     assert "홈팀 최근 5경기 4승" in resp.text
     assert "&lt;b&gt;원정팀&lt;/b&gt;" in resp.text  # 포인트 텍스트도 escape됨
 
@@ -275,7 +276,7 @@ def test_dashboard_renders_genai_reasoning_as_headline_and_tagged_points(client,
     resp = client.get("/dashboard?date=2026-09-06")
     assert resp.status_code == 200
     assert '<p class="ai-headline">주전 공격수 부상으로 홈팀 우세 축소</p>' in resp.text
-    assert '<span class="ai-tag ai-tag-injury">부상</span>' in resp.text
+    assert 'class="ai-point ai-point-injury"' in resp.text
     assert "홈팀 주전 공격수 결장" in resp.text
 
 

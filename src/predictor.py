@@ -30,6 +30,8 @@ def load_model_bundle(path: Path) -> dict:
     # 로드 시점에 한 번 검증한다.
     if list(bundle["model"].classes_) != bundle["classes"]:
         raise RuntimeError(f"{path}의 model_bundle이 손상됐습니다 — classes가 모델과 불일치")
+    if bundle.get("odds_model") is not None and list(bundle["odds_model"].classes_) != bundle["odds_classes"]:
+        raise RuntimeError(f"{path}의 model_bundle이 손상됐습니다 — odds_classes가 odds_model과 불일치")
     return bundle
 
 
@@ -45,7 +47,21 @@ def _current_season_known_teams(matches: pd.DataFrame) -> set:
     return set(season_matches["home_team"]) | set(season_matches["away_team"])
 
 
-def predict_match(home_team: str, away_team: str, matches: pd.DataFrame, model_bundle: dict) -> dict:
+def predict_match(
+    home_team: str, away_team: str, matches: pd.DataFrame, model_bundle: dict, odds: dict | None = None
+) -> dict:
+    # 배당률 모델이 폼 기반 모델보다 정확도가 높다(실험 확인, 55%대 vs 40%대) — 시장이
+    # 이미 부상/폼/전술 등 공개정보를 우리 통계모델보다 효율적으로 반영하기 때문이다.
+    # odds는 fetch_upcoming_odds()가 실제 예정 경기 목록에서 팀명을 매핑해 채운 값만
+    # 들어오므로(호출자가 임의 팀명으로 조작할 수 없음) known_teams 검증보다 먼저 이
+    # 경로를 확인해도 안전하다 — 오히려 아래 known_teams 검증은 "완료된 경기"로만
+    # 팀을 판단해서, 승격팀처럼 이번 시즌 첫 경기 전이라 폼 기록이 없는 팀은 배당률이
+    # 있어도 여기서 막혀버린다. 그래서 배당률 경로를 먼저 시도한다.
+    if odds is not None and model_bundle.get("odds_model") is not None:
+        odds_features = pd.DataFrame([odds])[model_bundle["odds_feature_names"]]
+        proba = model_bundle["odds_model"].predict_proba(odds_features)[0]
+        return dict(zip(model_bundle["odds_classes"], proba.tolist()))
+
     known_teams = _current_season_known_teams(matches)
     for team in (home_team, away_team):
         if team not in known_teams:

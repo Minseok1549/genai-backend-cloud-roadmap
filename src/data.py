@@ -47,32 +47,70 @@ def load_matches(seasons: list[int] | None = None) -> pd.DataFrame:
 UPCOMING_STATUSES = {"SCHEDULED", "TIMED"}
 
 
-def load_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dict]:
-    """target_date(같은 UTC 날짜)에 예정된 경기 목록을 반환한다.
-    아직 시작 전(SCHEDULED/TIMED)인 경기만 남긴다 — POSTPONED/CANCELLED/SUSPENDED는
-    "예정"이 아니라 이미 무산됐거나 불확실한 경기라 예측 대상에서 제외하고,
-    IN_PLAY/PAUSED는 이미 시작해서 사전 예측의 의미가 없으므로 제외한다."""
+def load_upcoming_fixtures(season: int = CURRENT_SEASON) -> list[dict]:
+    """아직 시작 전(SCHEDULED/TIMED)인 경기 전체를 킥오프 시각순으로 반환한다 —
+    POSTPONED/CANCELLED/SUSPENDED는 "예정"이 아니라 이미 무산됐거나 불확실한 경기라
+    예측 대상에서 제외하고, IN_PLAY/PAUSED는 이미 시작해서 사전 예측의 의미가 없으므로
+    제외한다."""
     path = RAW_DIR / f"matches_{season}.json"
     if not path.exists():
         return []
     data = json.loads(path.read_text())
-    target = pd.Timestamp(target_date).date()
     fixtures = []
     for m in data["matches"]:
         if m["status"] not in UPCOMING_STATUSES:
             continue
-        kickoff = pd.Timestamp(m["utcDate"])
-        if kickoff.date() != target:
-            continue
+        referees = m.get("referees") or []
         fixtures.append(
             {
                 "match_id": m["id"],
                 "kickoff_utc": m["utcDate"],
                 "home_team": m["homeTeam"]["name"],
                 "away_team": m["awayTeam"]["name"],
+                "home_crest": m["homeTeam"].get("crest"),
+                "away_crest": m["awayTeam"].get("crest"),
+                "referee": referees[0]["name"] if referees else None,
             }
         )
-    return fixtures
+    return sorted(fixtures, key=lambda f: f["kickoff_utc"])
+
+
+def load_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dict]:
+    """target_date(같은 UTC 날짜)에 예정된 경기 목록을 반환한다."""
+    target = pd.Timestamp(target_date).date()
+    return [f for f in load_upcoming_fixtures(season) if pd.Timestamp(f["kickoff_utc"]).date() == target]
+
+
+def _fixture_with_status(m: dict) -> dict:
+    """raw 경기 JSON 하나를 상태(그리고 FINISHED면 스코어)까지 포함한 fixture dict로
+    변환한다. load_matchday_info와 load_all_fixtures_on_date가 공유한다."""
+    fx = {
+        "match_id": m["id"],
+        "kickoff_utc": m["utcDate"],
+        "home_team": m["homeTeam"]["name"],
+        "away_team": m["awayTeam"]["name"],
+        "home_crest": m["homeTeam"].get("crest"),
+        "away_crest": m["awayTeam"].get("crest"),
+        "status": m["status"],
+    }
+    if m["status"] == "FINISHED":
+        full_time = m.get("score", {}).get("fullTime", {})
+        fx["score"] = {"home": full_time.get("home"), "away": full_time.get("away")}
+    return fx
+
+
+def load_all_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list[dict]:
+    """target_date(같은 UTC 날짜)에 열리는 경기를 상태 무관(FINISHED 포함, 스코어 포함)으로
+    전부 반환한다. load_fixtures_on_date는 SCHEDULED/TIMED만 보여줘서 이미 끝난 경기가
+    날짜별 대시보드에서 사라지는 문제가 있었다 — 종료된 경기는 예측이 아니라 실제 결과를
+    보여줘야 하므로 이 함수를 쓴다."""
+    path = RAW_DIR / f"matches_{season}.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text())
+    target = pd.Timestamp(target_date).date()
+    matches = [m for m in data["matches"] if pd.Timestamp(m["utcDate"]).date() == target]
+    return sorted((_fixture_with_status(m) for m in matches), key=lambda f: f["kickoff_utc"])
 
 
 def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
@@ -100,17 +138,5 @@ def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
         (m for m in data["matches"] if m["matchday"] == matchday), key=lambda m: m["utcDate"]
     )
     dates = sorted({m["utcDate"][:10] for m in round_matches})
-    fixtures = []
-    for m in round_matches:
-        fx = {
-            "match_id": m["id"],
-            "kickoff_utc": m["utcDate"],
-            "home_team": m["homeTeam"]["name"],
-            "away_team": m["awayTeam"]["name"],
-            "status": m["status"],
-        }
-        if m["status"] == "FINISHED":
-            full_time = m.get("score", {}).get("fullTime", {})
-            fx["score"] = {"home": full_time.get("home"), "away": full_time.get("away")}
-        fixtures.append(fx)
+    fixtures = [_fixture_with_status(m) for m in round_matches]
     return {"matchday": matchday, "dates": dates, "fixtures": fixtures}

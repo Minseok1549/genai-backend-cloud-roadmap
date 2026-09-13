@@ -59,9 +59,13 @@ ODDS_API_TEAM_MAP.update({t: f"{t} FC" for t in _FC_SUFFIX_TEAMS})
 
 
 def load_odds_api_key() -> str:
+    """환경 변수 쪽 값도 strip한다. Secret Manager에 키를 넣을 때 파일 끝 개행이 같이 들어가는
+    일이 흔하고, 이 키는 쿼리 문자열에 붙기 때문에 개행이 %0A로 인코딩돼 401을 받는다.
+    아래 .env 경로는 이미 strip을 하고 있어서 로컬에서는 증상이 안 나타나고, 배포 환경에서만
+    조용히 깨진다 — 실제로 프로덕션이 이 이유로 배당률을 못 받고 있었다."""
     env_key = os.environ.get("ODDS_API_KEY")
-    if env_key:
-        return env_key
+    if env_key and env_key.strip():
+        return env_key.strip()
     env_path = ROOT / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
@@ -119,7 +123,11 @@ def _fetch_live_odds_from_api(api_key: str) -> list[dict]:
         params={"apiKey": api_key, "regions": "uk", "markets": "h2h", "oddsFormat": "decimal"},
         timeout=20,
     )
-    resp.raise_for_status()
+    # requests의 HTTPError 메시지에는 요청 URL이 그대로 들어간다. 이 API는 키를 쿼리
+    # 문자열로 받으므로, 그 예외를 로그에 남기면 API 키가 평문으로 로그에 적힌다 — 실제로
+    # Cloud Logging에 키가 남았다. 상태 코드만 남기고 URL은 버린다.
+    if not resp.ok:
+        raise RuntimeError(f"odds API returned HTTP {resp.status_code}")
 
     results = []
     for m in resp.json():

@@ -68,3 +68,26 @@ def test_fetch_upcoming_odds_raises_during_backoff_without_cache(tmp_path, monke
     with pytest.raises(RuntimeError, match="backoff"):
         odds_module.fetch_upcoming_odds(api_key="k")
     assert len(calls) == 1
+
+
+def test_api_key_from_environment_is_stripped(monkeypatch):
+    """Secret Manager에 키를 넣을 때 파일 끝 개행이 같이 들어가는 일이 흔하다. 이 키는
+    쿼리 문자열에 붙기 때문에 개행이 %0A로 인코딩돼 401이 된다 — .env 경로만 strip하고
+    있어서 로컬에서는 멀쩡하고 배포 환경에서만 깨졌다."""
+    monkeypatch.setenv("ODDS_API_KEY", "abc123\n")
+    assert odds_module.load_odds_api_key() == "abc123"
+
+
+def test_api_key_error_does_not_leak_the_key(monkeypatch):
+    """requests의 HTTPError 메시지에는 요청 URL이 그대로 들어간다. 그 예외를 로그에 남기면
+    쿼리 문자열에 실린 API 키가 평문으로 로그에 적힌다."""
+    class FakeResp:
+        ok = False
+        status_code = 401
+
+    monkeypatch.setattr(odds_module.requests, "get", lambda *a, **kw: FakeResp())
+
+    with pytest.raises(Exception) as excinfo:
+        odds_module._fetch_live_odds_from_api("super-secret-key")
+    assert "super-secret-key" not in str(excinfo.value)
+    assert "401" in str(excinfo.value)

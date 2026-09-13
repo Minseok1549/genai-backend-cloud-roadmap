@@ -27,9 +27,11 @@ _last_failure_at = 0.0  # 마지막 API 실패 시각(프로세스 재시작 시
 
 def load_api_key() -> str:
     # 클라우드 배포 시 시크릿은 보통 환경변수로 주입된다 — .env는 로컬 개발용 fallback으로만 쓴다.
+    # strip 이유: 시크릿에 파일 끝 개행이 같이 들어가는 일이 흔한데, .env 경로만 strip하고
+    # 있으면 로컬에서는 멀쩡하고 배포 환경에서만 인증이 깨진다(odds.py에서 실제로 발생).
     env_key = os.environ.get("FOOTBALL_DATA_API_KEY")
-    if env_key:
-        return env_key
+    if env_key and env_key.strip():
+        return env_key.strip()
     env_path = ROOT / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():

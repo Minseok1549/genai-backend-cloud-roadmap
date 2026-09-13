@@ -31,7 +31,9 @@ RAW_DIR = ROOT / "data" / "raw"
 ODDS_HISTORY_PATH = RAW_DIR / "odds_history.csv"
 ODDS_LIVE_CACHE_PATH = RAW_DIR / "odds_live_cache.json"
 LIVE_CACHE_TTL_SECONDS = 6 * 3600  # fetch_data.py의 CACHE_TTL_SECONDS와 동일 — 무료 티어(월 500회) 보호
+FAILURE_BACKOFF_SECONDS = 15 * 60  # API 호출이 실패한 뒤 이 시간 동안은 다시 부르지 않는다
 _fetch_lock = threading.Lock()  # 같은 프로세스 내 동시 요청이 캐시 미스 시 각자 API를 부르는 걸 방지
+_last_failure_at = 0.0  # 마지막 API 실패 시각(monotonic 아님 — 프로세스 재시작 시 자연히 초기화)
 
 HISTORY_SOURCE_URL = "https://raw.githubusercontent.com/xgabora/Club-Football-Match-Data-2000-2025/main/data/Matches.csv"
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
@@ -175,6 +177,7 @@ def fetch_upcoming_odds(api_key: str | None = None) -> dict[tuple[str, str], dic
         if age < LIVE_CACHE_TTL_SECONDS:
             return _to_odds_map(_lock_free_cached, stale=False)
 
+    global _last_failure_at
     with _fetch_lock:
         # 락을 얻는 동안 다른 스레드가 이미 갱신했을 수 있으니 다시 확인한다.
         cached = _read_live_cache()
@@ -183,10 +186,22 @@ def fetch_upcoming_odds(api_key: str | None = None) -> dict[tuple[str, str], dic
             if age < LIVE_CACHE_TTL_SECONDS:
                 return _to_odds_map(cached, stale=False)
 
+        # 직전 호출이 실패했다면 backoff 동안은 아예 부르지 않는다. 실패해도 캐시 파일의
+        # mtime은 그대로라 TTL이 계속 만료 상태로 남는데, 이 게이트가 없으면 API가 죽어
+        # 있는 동안 들어오는 모든 요청이 각각 한 번씩 API를 다시 때려 쿼터를 태운다
+        # (무료 티어 월 500회) — "재시도 대신 오래된 캐시를 쓴다"는 게 실제로 성립하려면
+        # 실패 사실 자체를 기억해야 한다. 캐시가 아예 없으면 돌려줄 값이 없어 예외를 내지만,
+        # 그것도 API를 다시 부르지 않고 내는 쪽이 쿼터를 아낀다.
+        if time.time() - _last_failure_at < FAILURE_BACKOFF_SECONDS:
+            if cached is not None:
+                return _to_odds_map(cached, stale=True)
+            raise RuntimeError("배당률 API 호출이 최근 실패해 backoff 중입니다")
+
         try:
             api_key = api_key or load_odds_api_key()
             results = _fetch_live_odds_from_api(api_key)
         except Exception:
+            _last_failure_at = time.time()
             if cached is not None:
                 # API 장애/쿼터 소진 시 새로 호출을 반복하는 대신 오래된 캐시라도 쓴다
                 # — 매 요청마다 재시도해서 쿼터를 더 태우는 것보다 낫다. 다만 이 숫자는

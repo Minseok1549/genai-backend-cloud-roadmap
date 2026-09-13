@@ -36,10 +36,13 @@ def load_model_bundle(path: Path) -> dict:
 
 
 def _current_season_known_teams(matches: pd.DataFrame) -> set:
-    """강등팀은 과거 시즌 로그에 계속 남아있어 known_teams 체크를 그대로 통과하면, 몇 년 전
-    기록으로 '최근 폼'이 계산돼버린다. 그래서 팀 존재 여부는 (완료된 경기가 있는) 가장 최근
-    시즌 경기로만 판단한다 — 새 시즌에 아직 끝난 경기가 없으면 자연히 직전 시즌이 최근
-    시즌으로 선택되므로, 진행 중인 팀은 계속 known으로 인식된다."""
+    """호출자가 팀 목록을 주지 않았을 때 쓰는 fallback. 강등팀은 과거 시즌 로그에 계속
+    남아있어 팀 목록에 그대로 넣으면 몇 년 전 기록으로 '최근 폼'이 계산돼버리므로, 완료된
+    경기가 있는 가장 최근 시즌으로 범위를 좁힌다.
+
+    다만 이 방식은 시즌 첫 경기가 막 한 경기 끝난 시점에 그 경기에 나온 두 팀만 인정하게
+    되는 한계가 있다 — 그래서 실제 서빙 경로는 일정표 기준 팀 목록(data.load_season_teams)을
+    known_teams로 넘긴다."""
     if matches.empty:
         return set()
     latest_season = matches["season"].max()
@@ -48,24 +51,31 @@ def _current_season_known_teams(matches: pd.DataFrame) -> set:
 
 
 def predict_match(
-    home_team: str, away_team: str, matches: pd.DataFrame, model_bundle: dict, odds: dict | None = None
+    home_team: str,
+    away_team: str,
+    matches: pd.DataFrame,
+    model_bundle: dict,
+    odds: dict | None = None,
+    known_teams: set | None = None,
 ) -> dict:
+    # 팀 소속 검증을 두 모델 경로보다 먼저 한다. 이전에는 배당률 경로를 먼저 타서 검증을
+    # 건너뛰었는데, 그건 팀 목록을 "완료된 경기"에서만 뽑던 탓에 승격팀이 시즌 첫 경기 전에
+    # 막히는 걸 피하려던 우회였다 — 호출자가 일정표 기준 팀 목록을 넘기면 그 우회가 필요
+    # 없어지고, 검증이 앞에 있어야 존재하지 않는 팀명이 모델까지 내려가지 않는다.
+    # known_teams가 None이거나 빈 집합이면 "일정 캐시가 없어 팀 목록을 만들 수 없었다"는
+    # 뜻이다(load_season_teams는 파일이 없으면 빈 집합을 준다). 그때는 완료 경기 기반 판정으로
+    # 내려간다 — 일정 정보가 아예 없는 상황에서 쓸 수 있는 유일한 근거다.
+    known = known_teams or _current_season_known_teams(matches)
+    for team in (home_team, away_team):
+        if team not in known:
+            raise UnknownTeamError(team)
+
     # 배당률 모델이 폼 기반 모델보다 정확도가 높다(실험 확인, 55%대 vs 40%대) — 시장이
     # 이미 부상/폼/전술 등 공개정보를 우리 통계모델보다 효율적으로 반영하기 때문이다.
-    # odds는 fetch_upcoming_odds()가 실제 예정 경기 목록에서 팀명을 매핑해 채운 값만
-    # 들어오므로(호출자가 임의 팀명으로 조작할 수 없음) known_teams 검증보다 먼저 이
-    # 경로를 확인해도 안전하다 — 오히려 아래 known_teams 검증은 "완료된 경기"로만
-    # 팀을 판단해서, 승격팀처럼 이번 시즌 첫 경기 전이라 폼 기록이 없는 팀은 배당률이
-    # 있어도 여기서 막혀버린다. 그래서 배당률 경로를 먼저 시도한다.
     if odds is not None and model_bundle.get("odds_model") is not None:
         odds_features = pd.DataFrame([odds])[model_bundle["odds_feature_names"]]
         proba = model_bundle["odds_model"].predict_proba(odds_features)[0]
         return dict(zip(model_bundle["odds_classes"], proba.tolist()))
-
-    known_teams = _current_season_known_teams(matches)
-    for team in (home_team, away_team):
-        if team not in known_teams:
-            raise UnknownTeamError(team)
 
     home_form = latest_team_form(matches, home_team)
     away_form = latest_team_form(matches, away_team)

@@ -113,6 +113,24 @@ def load_all_fixtures_on_date(target_date, season: int = CURRENT_SEASON) -> list
     return sorted((_fixture_with_status(m) for m in matches), key=lambda f: f["kickoff_utc"])
 
 
+def load_season_teams(season: int = CURRENT_SEASON) -> set[str]:
+    """이번 시즌 일정에 이름이 올라 있는 팀 전체를 반환한다(경기 상태 무관).
+
+    "이 팀이 지금 이 리그에 있는가"를 완료된 경기로 판단하면 두 방향으로 틀린다: 시즌 첫
+    경기 전에는 지난 시즌 강등팀이 통과하고, 반대로 첫 경기가 한 경기만 끝난 시점에는 그
+    경기에 나온 두 팀만 인정돼 나머지 18팀이 "알 수 없는 팀"이 된다. 일정표는 개막 전부터
+    20팀 전부를 담고 있으므로 소속 판정은 이쪽이 맞다."""
+    path = RAW_DIR / f"matches_{season}.json"
+    if not path.exists():
+        return set()
+    data = json.loads(path.read_text())
+    teams = set()
+    for m in data["matches"]:
+        teams.add(m["homeTeam"]["name"])
+        teams.add(m["awayTeam"]["name"])
+    return teams
+
+
 def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
     """가장 임박한(아직 안 끝난 경기가 있는) matchday 번호, 그 라운드가 걸쳐 있는 UTC 날짜
     목록, 그리고 라운드에 속한 전체 경기 목록(상태 무관, FINISHED 포함)을 반환한다.

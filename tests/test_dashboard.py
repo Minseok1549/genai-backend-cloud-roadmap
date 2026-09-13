@@ -82,135 +82,6 @@ def test_dashboard_renders_crest_when_present_and_placeholder_when_absent(client
     assert '<span class="crest crest-empty">' in resp.text
 
 
-def test_dashboard_renders_ai_report_html_escaped(client, monkeypatch):
-    monkeypatch.setattr(api, "_list_available_dates", lambda limit=14: ["2026-09-06"])
-    monkeypatch.setattr(
-        api, "load_all_fixtures_on_date",
-        lambda date_str: [_fx(1, "Arsenal FC", "Chelsea FC", "2026-09-06T15:30:00Z")],
-    )
-    monkeypatch.setattr(
-        api,
-        "_fetch_daily_predictions",
-        lambda date_str: {
-            "generated_at": "2026-09-06T06:00:00Z",
-            "predictions": [
-                {
-                    "match_id": 1,
-                    "probabilities": {"HOME_TEAM": 0.6, "DRAW": 0.25, "AWAY_TEAM": 0.15},
-                    "report": "<script>alert(1)</script> 부상자 없음",
-                }
-            ],
-        },
-    )
-
-    resp = client.get("/dashboard?date=2026-09-06")
-    assert resp.status_code == 200
-    assert "AI 프리뷰" in resp.text
-    assert "<script>alert(1)</script>" not in resp.text  # XSS 방지 — escape돼야 함
-    assert "&lt;script&gt;" in resp.text
-
-
-def test_dashboard_renders_ai_report_as_headline_and_tagged_points(client, monkeypatch):
-    """기존 승부 예측 플랫폼처럼 긴 문단이 아니라 한 줄 총평 + 태그 달린 핵심 포인트
-    리스트로 렌더링돼야 한다 — 포인트 텍스트는 Gemini가 생성한 값이라 XSS 방지를 위해
-    escape도 함께 확인한다."""
-    monkeypatch.setattr(api, "_list_available_dates", lambda limit=14: ["2026-09-06"])
-    monkeypatch.setattr(
-        api, "load_all_fixtures_on_date",
-        lambda date_str: [_fx(1, "Arsenal FC", "Chelsea FC", "2026-09-06T15:30:00Z")],
-    )
-    monkeypatch.setattr(
-        api,
-        "_fetch_daily_predictions",
-        lambda date_str: {
-            "generated_at": "2026-09-06T06:00:00Z",
-            "predictions": [
-                {
-                    "match_id": 1,
-                    "probabilities": {"HOME_TEAM": 0.6, "DRAW": 0.25, "AWAY_TEAM": 0.15},
-                    "report": {
-                        "headline": "홈팀이 근소하게 유리",
-                        "points": [
-                            {"tag": "부상", "text": "<b>원정팀</b> 주전 결장"},
-                            {"tag": "폼", "text": "홈팀 최근 5경기 4승"},
-                        ],
-                        "sources": [],
-                    },
-                }
-            ],
-        },
-    )
-
-    resp = client.get("/dashboard?date=2026-09-06")
-    assert resp.status_code == 200
-    assert '<p class="ai-headline">홈팀이 근소하게 유리</p>' in resp.text
-    assert 'class="ai-point ai-point-injury"' in resp.text
-    assert 'class="ai-point ai-point-form"' in resp.text
-    assert "부상" in resp.text and "폼" in resp.text
-    assert "홈팀 최근 5경기 4승" in resp.text
-    assert "&lt;b&gt;원정팀&lt;/b&gt;" in resp.text  # 포인트 텍스트도 escape됨
-
-
-def test_dashboard_renders_headline_even_when_points_is_empty(client, monkeypatch):
-    """Gemini가 headline은 뽑았지만 points가 빈 리스트로 저장된 경우에도(예: 확인 가능한
-    근거가 전혀 없었던 경기), headline이 있으면 그것만이라도 보여야 한다 — 전체 details가
-    통으로 사라지면 안 된다."""
-    monkeypatch.setattr(api, "_list_available_dates", lambda limit=14: ["2026-09-06"])
-    monkeypatch.setattr(
-        api, "load_all_fixtures_on_date",
-        lambda date_str: [_fx(1, "Arsenal FC", "Chelsea FC", "2026-09-06T15:30:00Z")],
-    )
-    monkeypatch.setattr(
-        api, "_fetch_daily_predictions",
-        lambda date_str: {
-            "generated_at": "2026-09-06T06:00:00Z",
-            "predictions": [
-                {
-                    "match_id": 1,
-                    "probabilities": {"HOME_TEAM": 0.6, "DRAW": 0.25, "AWAY_TEAM": 0.15},
-                    "report": {"headline": "확인 가능한 특이사항 없음", "points": [], "sources": []},
-                }
-            ],
-        },
-    )
-
-    resp = client.get("/dashboard?date=2026-09-06")
-    assert resp.status_code == 200
-    assert '<p class="ai-headline">확인 가능한 특이사항 없음</p>' in resp.text
-
-
-def test_dashboard_renders_ai_report_with_sources_collapsed_by_default(client, monkeypatch):
-    monkeypatch.setattr(api, "_list_available_dates", lambda limit=14: ["2026-09-06"])
-    monkeypatch.setattr(
-        api, "load_all_fixtures_on_date",
-        lambda date_str: [_fx(1, "Arsenal FC", "Chelsea FC", "2026-09-06T15:30:00Z")],
-    )
-    monkeypatch.setattr(
-        api,
-        "_fetch_daily_predictions",
-        lambda date_str: {
-            "generated_at": "2026-09-06T06:00:00Z",
-            "predictions": [
-                {
-                    "match_id": 1,
-                    "probabilities": {"HOME_TEAM": 0.6, "DRAW": 0.25, "AWAY_TEAM": 0.15},
-                    "report": {
-                        "text": "부상자 없음",
-                        "sources": [{"title": "<b>속보</b>", "url": "https://example.com/a\"onclick=1"}],
-                    },
-                }
-            ],
-        },
-    )
-
-    resp = client.get("/dashboard?date=2026-09-06")
-    assert resp.status_code == 200
-    assert "<details" in resp.text and "open" not in resp.text.split("<details")[1][:20]  # 기본 접힘
-    assert "부상자 없음" in resp.text
-    assert "&lt;b&gt;속보&lt;/b&gt;" in resp.text  # 출처 제목 escape
-    assert 'href="https://example.com/a&quot;onclick=1"' in resp.text  # URL의 "가 escape돼 속성 탈출 불가
-
-
 def test_dashboard_renders_genai_prediction_alongside_stat_model(client, monkeypatch):
     monkeypatch.setattr(api, "_list_available_dates", lambda limit=14: ["2026-09-06"])
     monkeypatch.setattr(
@@ -238,8 +109,8 @@ def test_dashboard_renders_genai_prediction_alongside_stat_model(client, monkeyp
 
     resp = client.get("/dashboard?date=2026-09-06")
     assert resp.status_code == 200
-    assert "통계 모델 예측" in resp.text
-    assert "GenAI 예측 (최신 뉴스 반영)" in resp.text
+    assert "배당률 기반 예측" in resp.text
+    assert "뉴스 시나리오 (위 확률을 뉴스로 조정)" in resp.text
     assert "60.0%" in resp.text and "50.0%" in resp.text  # 두 확률이 나란히 보임
     assert "주전 공격수 부상으로 홈팀 우세가 다소 줄어듦" in resp.text
     assert "&lt;b&gt;속보&lt;/b&gt;" in resp.text  # 출처 제목 escape
@@ -312,7 +183,7 @@ def test_dashboard_keeps_genai_block_for_finished_match(client, monkeypatch):
 
     resp = client.get("/dashboard?date=2026-09-06")
     assert resp.status_code == 200
-    assert "경기 전 GenAI 예측" in resp.text
+    assert "경기 전 뉴스 시나리오" in resp.text
     assert "경기 전 뉴스 기반 근거" in resp.text
     assert "2 : 1" in resp.text  # 실제 스코어는 fixture에서 채워짐
 
@@ -350,7 +221,7 @@ def test_dashboard_keeps_genai_only_block_for_finished_match_when_odds_never_ope
     resp = client.get("/dashboard?date=2026-09-06")
     assert resp.status_code == 200
     assert "1 : 1" in resp.text
-    assert "경기 전 GenAI 예측" in resp.text
+    assert "경기 전 뉴스 시나리오" in resp.text
     assert "배당률 공개 전, 뉴스 기반 근거" in resp.text
     assert "40.0%" in resp.text
 
@@ -413,7 +284,7 @@ def test_dashboard_renders_genai_only_card_when_odds_not_open_yet(client, monkey
 
     resp = client.get("/dashboard?date=2026-09-06")
     assert resp.status_code == 200
-    assert "GenAI 예측 (배당률 공개 전, 뉴스 기반)" in resp.text
+    assert "뉴스 시나리오 (배당률 공개 전, 뉴스만 근거)" in resp.text
     assert "55.0%" in resp.text
     assert "사전 예측 없음" not in resp.text
 

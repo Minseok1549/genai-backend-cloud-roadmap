@@ -1,6 +1,6 @@
-"""Gemini API로 경기 프리뷰 리포트를 생성한다. Google Search grounding으로 학습 데이터
-컷오프 이후의 최신 선수/감독 소식을 반영하고, 우리 모델이 계산한 승부 확률과 배정된
-주심 정보를 프롬프트에 함께 넣어 그 확률을 어떻게 해석해야 하는지까지 코멘트받는다.
+"""Gemini API로 킥오프 임박 시점의 독립적인 승부 예측(확률 + 근거)을 생성한다. Google Search
+grounding으로 학습 데이터 컷오프 이후의 최신 선수/감독 소식을 반영하고, 우리 통계 모델이
+계산한 확률을 참고값으로 프롬프트에 함께 넣는다.
 
 Pro가 아니라 Flash 계열을 쓰는 이유: gemini-3.6-flash는 토큰 단가($0.75/$3.75 per 1M, 2026년
 말까지 프로모션가)로 Pro(2.5.1-pro 기준 $2/$12대)보다 훨씬 싸면서 grounding·리포트 종합 품질은
@@ -36,32 +36,6 @@ def load_gemini_api_key() -> str:
 # 기존 승부 예측 서비스(Sofascore/FotMob류)를 따라 프리뷰를 긴 문단이 아니라 한 줄 총평 +
 # 태그가 붙은 핵심 포인트 목록으로 받는다 — 대시보드에서 줄글 대신 칩/리스트로 렌더링하기 위함.
 _POINT_TAGS = ("부상", "폼", "전술", "주심", "기타")
-
-
-def _build_prompt(home_team: str, away_team: str, kickoff_utc: str, referee: str | None, probabilities: dict) -> str:
-    home_pct = probabilities["HOME_TEAM"] * 100
-    draw_pct = probabilities["DRAW"] * 100
-    away_pct = probabilities["AWAY_TEAM"] * 100
-    referee_line = f"배정된 주심: {referee}" if referee else "배정된 주심 정보 없음"
-    tags = "/".join(_POINT_TAGS)
-    return f"""다음 EPL 경기의 프리뷰를 한국어로 작성해줘.
-
-경기: {home_team} vs {away_team}
-킥오프(UTC): {kickoff_utc}
-{referee_line}
-통계 모델이 최근 팀 폼(승점·득실)만으로 계산한 승부 확률: 홈승 {home_pct:.1f}% / 무 {draw_pct:.1f}% / 원정승 {away_pct:.1f}%
-
-Google 검색으로 아래 내용을 최신 상태로 확인해서 반영해:
-- 양 팀의 주요 선수 부상/징계/컨디션 이슈
-- 감독 관련 이슈(경질설, 전술 변화, 최근 발언 등)
-- 배정된 주심이 있다면 그 주심의 최근 판정 성향(카드/페널티 빈도 등)
-
-위 통계 모델 확률을 이 최신 정보에 비춰 어떻게 해석해야 하는지 15단어 이내의 짧은 한 줄
-총평(headline)과, 근거가 되는 핵심 포인트 2~4개를 뽑아줘. 각 포인트는 tag({tags} 중 하나)와
-15단어 이내의 짧은 text로 구성해. 확인 안 되는 내용은 추측하지 말고 생략해.
-
-다른 설명 문장 없이 아래 형식 그대로 한 줄로만 응답해:
-REPORT_JSON: {{"headline": "...", "points": [{{"tag": "...", "text": "..."}}]}}"""
 
 
 def _extract_sources(candidate: dict) -> list[dict]:
@@ -134,31 +108,6 @@ def _normalize_points(raw_points) -> list[dict]:
         if len(points) == 4:
             break
     return points
-
-
-def generate_match_report(
-    home_team: str, away_team: str, kickoff_utc: str, referee: str | None, probabilities: dict
-) -> dict:
-    api_key = load_gemini_api_key()
-    prompt = _build_prompt(home_team, away_team, kickoff_utc, referee, probabilities)
-    resp = requests.post(
-        API_URL,
-        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "tools": [{"google_search": {}}],
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    resp.raise_for_status()
-    candidate = resp.json()["candidates"][0]
-    text = "".join(p["text"] for p in candidate["content"]["parts"] if "text" in p).strip()
-    if not text:
-        raise RuntimeError("Gemini 응답에 텍스트가 없습니다")
-    raw = _extract_json_trailer(text, "REPORT_JSON")
-    headline = str(raw.get("headline") or "").strip()
-    points = _normalize_points(raw.get("points"))
-    return {"headline": headline, "points": points, "sources": _extract_sources(candidate)}
 
 
 def _build_prediction_prompt(

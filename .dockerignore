@@ -6,3 +6,9 @@ __pycache__/
 .env
 notes/
 tests/
+
+# 학습 전용 데이터 — 서빙 컨테이너는 읽지 않는다(train.py/odds_history만 씀)
+data/raw/odds_history.csv
+# 런타임 캐시 — 이미지에 박히면 모든 콜드스타트가 "배포 시점의 배당률"로 시작하고,
+# TTL(6h)이 배포 시각 기준으로 계산돼 실제 신선도와 어긋난다
+data/raw/odds_live_cache.json

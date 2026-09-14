@@ -186,3 +186,39 @@ def test_generate_genai_prediction_raises_when_probability_sum_way_off(monkeypat
             "Arsenal FC", "Chelsea FC", "2026-09-06T15:30:00Z", None,
             {"HOME_TEAM": 0.5, "DRAW": 0.3, "AWAY_TEAM": 0.2},
         )
+
+
+def test_genai_prediction_does_not_adopt_an_unrelated_json_block(monkeypatch):
+    """PREDICTION_JSON 값이 null인데 응답 뒤에 다른 JSON 객체가 붙어 있으면, 그걸 예측으로
+    집어오는 대신 오류로 처리해야 한다.
+
+    마커 뒤에서 무조건 첫 '{'를 찾으면 값이 비었을 때 한참 아래의 무관한 객체를 읽어온다 —
+    엉뚱한 숫자가 승부 확률로 대시보드에 실린다. 값 자리에 JSON 객체가 없으면 '예측 없음'이
+    맞는 결과다."""
+    monkeypatch.setattr(report, "load_gemini_api_key", lambda: "fake-key")
+    text = (
+        "PREDICTION_JSON: null\n"
+        'DEBUG_JSON: {"home_win": 0.9, "draw": 0.05, "away_win": 0.05}'
+    )
+    monkeypatch.setattr(report.requests, "post", lambda *a, **kw: _fake_prediction_response(text))
+
+    with pytest.raises(ValueError):
+        report.generate_genai_prediction(
+            "Arsenal FC", "Chelsea FC", "2026-09-06T15:30:00Z", None,
+            {"HOME_TEAM": 0.5, "DRAW": 0.3, "AWAY_TEAM": 0.2},
+        )
+
+
+def test_genai_prediction_rejects_boolean_probabilities(monkeypatch):
+    """true/false를 확률로 받아들이면 안 된다. 파이썬에서 bool은 int의 하위 타입이라
+    float(True)가 1.0으로 조용히 통과하고, 그러면 "home_win": true 한 줄이 '홈 승리 100%'
+    예측이 돼 범위·합계 검사까지 전부 지나쳐 그대로 저장된다."""
+    monkeypatch.setattr(report, "load_gemini_api_key", lambda: "fake-key")
+    text = 'PREDICTION_JSON: {"home_win": true, "draw": false, "away_win": false}'
+    monkeypatch.setattr(report.requests, "post", lambda *a, **kw: _fake_prediction_response(text))
+
+    with pytest.raises(ValueError):
+        report.generate_genai_prediction(
+            "Arsenal FC", "Chelsea FC", "2026-09-06T15:30:00Z", None,
+            {"HOME_TEAM": 0.5, "DRAW": 0.3, "AWAY_TEAM": 0.2},
+        )

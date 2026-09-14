@@ -1,5 +1,7 @@
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -8,8 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import odds as odds_module  # noqa: E402
 
 
+# commence_time은 먼 미래로 둔다 — 이미 시작한 경기의 배당률은 걸러지기 때문에, 시각이
+# 지나간 값이면 이 레코드를 쓰는 모든 테스트가 시간이 흐른 뒤 조용히 빈 결과를 받는다.
 RECORDS = [{"home_team": "A", "away_team": "B", "odds_p_home": 0.5, "odds_p_draw": 0.3,
-            "odds_p_away": 0.2, "bookmaker_count": 3}]
+            "odds_p_away": 0.2, "bookmaker_count": 3, "commence_time": "2099-01-01T00:00:00Z"}]
 
 
 def test_devig_removes_overround(tmp_path):
@@ -91,3 +95,102 @@ def test_api_key_error_does_not_leak_the_key(monkeypatch):
         odds_module._fetch_live_odds_from_api("super-secret-key")
     assert "super-secret-key" not in str(excinfo.value)
     assert "401" in str(excinfo.value)
+
+
+def _payload(home_price):
+    """h2h 응답 하나. 첫 북메이커의 홈 가격만 바꿔 이상치를 주입할 수 있게 한다."""
+    def book(h, d, a):
+        return {"markets": [{"key": "h2h", "outcomes": [
+            {"name": "Arsenal", "price": h}, {"name": "Draw", "price": d},
+            {"name": "Chelsea", "price": a}]}]}
+    return [{"home_team": "Arsenal", "away_team": "Chelsea",
+             "bookmakers": [book(home_price, 3.5, 4.0), book(1.8, 3.6, 4.2)]}]
+
+
+@pytest.mark.parametrize("bad_price", [0, None, 1.0, True, "1.8", float("inf")])
+def test_one_bad_bookmaker_price_does_not_discard_the_others(monkeypatch, bad_price):
+    """북메이커 한 곳의 가격이 이상해도 나머지 북메이커의 배당률은 살아야 한다.
+
+    _devig는 1/가격을 계산하므로 0이나 null이 들어오면 예외가 난다. 그 예외가 루프 밖으로
+    새면 이 경기뿐 아니라 같은 응답에 실린 모든 경기의 배당률이 함께 사라지고 15분 backoff까지
+    걸린다 — 정상 북메이커 20곳의 가격이 이상치 하나 때문에 버려진다. 십진 배당률 1.0과
+    문자열, int의 하위 타입이라 1로 통과해버리는 True, 그리고 "1보다 크다"를 통과하지만 확률
+    합을 0으로 만들어 0으로 나누기를 일으키는 무한대도 같이 걸러야 한다."""
+    class Resp:
+        ok, status_code = True, 200
+        def json(self): return _payload(bad_price)
+
+    monkeypatch.setattr(odds_module.requests, "get", lambda *a, **k: Resp())
+    results = odds_module._fetch_live_odds_from_api("key")
+
+    assert len(results) == 1
+    assert results[0]["bookmaker_count"] == 1  # 정상 북메이커 한 곳만 채택
+    assert abs(sum(results[0][k] for k in odds_module.ODDS_FEATURE_NAMES) - 1.0) < 1e-9
+
+
+def test_corrupt_live_cache_is_refetched_instead_of_raising(tmp_path, monkeypatch):
+    """캐시 파일이 깨져 있으면 "캐시 없음"으로 보고 새로 받아와야 한다.
+
+    이 읽기는 fetch_upcoming_odds의 try 블록 밖에서 먼저 일어나므로, 깨진 파일에서 예외를
+    올리면 배당률 경로가 통째로 실패하고 새로 받아오는 시도조차 하지 않는다 — 파일이 한 번
+    깨지면 스스로 복구되지 않는다."""
+    cache = tmp_path / "odds_live_cache.json"
+    cache.write_text("{truncated")
+    monkeypatch.setattr(odds_module, "ODDS_LIVE_CACHE_PATH", cache)
+    monkeypatch.setattr(odds_module, "_last_failure_at", 0.0)
+    monkeypatch.setattr(odds_module, "_fetch_live_odds_from_api", lambda api_key: RECORDS)
+
+    result = odds_module.fetch_upcoming_odds(api_key="k")
+
+    assert result[("A", "B")]["stale"] is False
+    assert json.loads(cache.read_text()) == RECORDS  # 깨진 내용이 정상 값으로 덮어써졌다
+
+
+def test_fetched_records_keep_the_kickoff_time(monkeypatch):
+    """받아온 레코드에는 킥오프 시각이 함께 남아야 한다 — 캐시는 최대 6시간(장애 시 그보다
+    오래) 살아있어서, 저장 당시엔 시작 전이던 경기가 쓰는 시점엔 이미 진행 중일 수 있다."""
+    class Resp:
+        ok, status_code = True, 200
+        def json(self):
+            payload = _payload(1.9)
+            payload[0]["commence_time"] = "2026-09-20T14:00:00Z"
+            return payload
+
+    monkeypatch.setattr(odds_module.requests, "get", lambda *a, **k: Resp())
+
+    assert odds_module._fetch_live_odds_from_api("key")[0]["commence_time"] == "2026-09-20T14:00:00Z"
+
+
+@pytest.mark.parametrize("commence_time", ["2020-01-01T00:00:00Z", None, "어제", "2026-09-20T14:00:00"])
+def test_odds_for_matches_that_already_started_are_not_served(tmp_path, monkeypatch, commence_time):
+    """이미 킥오프한 경기의 배당률은 예측에 쓰면 안 된다.
+
+    배당률 제공사는 진행 중인 경기의 배당률도 함께 내려주는데, 그 숫자에는 현재 스코어가 이미
+    반영돼 있다 — 후반에 0-2로 지고 있는 팀의 승리 확률이 낮게 나오는 건 예측이 아니라 중간
+    결과 요약이다. 실제로 13시에 시작한 경기의 배당률이 13시 22분 캐시에 들어있었다.
+    킥오프 시각이 없거나 형식이 깨져(시간대 없음 등) 시작 전인지 확인할 수 없는 레코드도
+    같이 버린다 — 확인할 수 없는 배당률을 통과시키는 쪽이 더 위험하다."""
+    cache = tmp_path / "odds_live_cache.json"
+    record = {**RECORDS[0], "commence_time": commence_time}
+    cache.write_text(json.dumps([record]))
+    monkeypatch.setattr(odds_module, "ODDS_LIVE_CACHE_PATH", cache)
+
+    assert odds_module.fetch_upcoming_odds(api_key="k") == {}
+
+
+def test_cache_freshness_is_measured_on_the_file_that_was_read(tmp_path, monkeypatch):
+    """캐시 내용과 기록 시각은 같은 파일에서 함께 읽어야 한다.
+
+    따로 읽으면 그 사이에 다른 스레드가 os.replace로 파일을 갈아치울 수 있고, 그러면 낡은
+    내용에 새 파일의 시각이 붙어 이미 만료된 배당률이 "신선함"(stale=False)으로 통과한다.
+    읽기가 내용과 나이를 한 번에 돌려주면 둘이 어긋날 여지 자체가 없다."""
+    cache = tmp_path / "odds_live_cache.json"
+    cache.write_text(json.dumps(RECORDS))
+    monkeypatch.setattr(odds_module, "ODDS_LIVE_CACHE_PATH", cache)
+    seven_hours_ago = time.time() - 7 * 3600
+    os.utime(cache, (seven_hours_ago, seven_hours_ago))
+
+    records, age = odds_module._read_live_cache()
+
+    assert records == RECORDS
+    assert age > odds_module.LIVE_CACHE_TTL_SECONDS  # 만료로 판정돼야 한다

@@ -759,7 +759,10 @@ def test_fetch_upcoming_odds_marks_stale_cache_fallback(tmp_path, monkeypatch):
 
     cache_path = tmp_path / "odds_live_cache.json"
     cache_path.write_text(json.dumps([
-        {"home_team": "A", "away_team": "B", "odds_p_home": 0.5, "odds_p_draw": 0.3, "odds_p_away": 0.2, "bookmaker_count": 3}
+        # commence_time은 먼 미래로 둔다 — 이미 킥오프한 경기의 배당률은 걸러지므로,
+        # 시각이 지나간 값이면 이 테스트가 시간이 흐른 뒤 조용히 빈 결과를 받는다.
+        {"home_team": "A", "away_team": "B", "odds_p_home": 0.5, "odds_p_draw": 0.3,
+         "odds_p_away": 0.2, "bookmaker_count": 3, "commence_time": "2099-01-01T00:00:00Z"}
     ]))
     old_mtime = time.time() - odds_module.LIVE_CACHE_TTL_SECONDS - 3600
     os.utime(cache_path, (old_mtime, old_mtime))

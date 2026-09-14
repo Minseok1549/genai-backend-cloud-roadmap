@@ -45,13 +45,20 @@ def load_matches(seasons: list[int] | None = None) -> pd.DataFrame:
 
 
 UPCOMING_STATUSES = {"SCHEDULED", "TIMED"}
+LIVE_STATUSES = {"IN_PLAY", "PAUSED"}
 
 
 def load_upcoming_fixtures(season: int = CURRENT_SEASON) -> list[dict]:
-    """아직 시작 전(SCHEDULED/TIMED)인 경기 전체를 킥오프 시각순으로 반환한다 —
+    """상태가 SCHEDULED/TIMED인 경기 전체를 킥오프 시각순으로 반환한다 —
     POSTPONED/CANCELLED/SUSPENDED는 "예정"이 아니라 이미 무산됐거나 불확실한 경기라
     예측 대상에서 제외하고, IN_PLAY/PAUSED는 이미 시작해서 사전 예측의 의미가 없으므로
-    제외한다."""
+    제외한다.
+
+    주의: 여기서 걸러지는 건 상태값뿐이고 킥오프 시각은 보지 않는다. 이 목록의 출처는 최대
+    6시간 묵을 수 있는 시즌 캐시라, 실제로는 이미 시작한 경기가 캐시에서 아직 TIMED로 남아
+    통과할 수 있다 — "시작 전"을 보장하는 건 이 함수가 아니라 호출자다. 유일한 호출자인
+    daily_predict.py가 _within_lookahead와 build_fixture_prediction에서 킥오프까지 남은
+    시간이 0보다 큰지 두 번 확인하므로, 여기에 같은 검사를 또 넣지 않는다."""
     path = RAW_DIR / f"matches_{season}.json"
     if not path.exists():
         return []
@@ -144,9 +151,18 @@ def load_matchday_info(season: int = CURRENT_SEASON) -> dict:
     if not path.exists():
         return {"matchday": None, "dates": [], "fixtures": []}
     data = json.loads(path.read_text())
-    upcoming = [m for m in data["matches"] if m["status"] in UPCOMING_STATUSES]
-    if upcoming:
-        matchday = min(m["matchday"] for m in upcoming)
+    unfinished = [m for m in data["matches"] if m["status"] in UPCOMING_STATUSES | LIVE_STATUSES]
+    if unfinished:
+        # 라운드 번호의 최솟값이 아니라, 아직 안 끝난 경기 중 가장 먼저 시작한(또는 시작할)
+        # 경기가 속한 라운드를 고른다.
+        # 최솟값을 쓰면 안 되는 이유: 연기된 경기가 나중 날짜로 재편성되면 라운드 번호는 원래
+        # 것을 그대로 유지하므로, 그 한 경기 때문에 이미 다 끝난 과거 라운드에 대시보드가
+        # 묶인다 (3라운드 경기 하나가 12월로 밀리면 9월부터 12월까지 계속 3라운드를 보여준다).
+        # 진행 중(IN_PLAY/PAUSED)인 경기도 "안 끝난 경기"로 세는 이유: 이걸 빼면 한 라운드의
+        # 마지막 경기가 킥오프하는 순간 그 라운드에 남은 게 없어져서, 경기가 진행되는 동안
+        # 대시보드가 다음 라운드로 넘어가버린다 — 사람들이 결과를 확인하려고 들어오는 바로
+        # 그 시간에 보고 싶은 라운드가 화면에서 사라진다.
+        matchday = min(unfinished, key=lambda m: m["utcDate"])["matchday"]
     else:
         finished = [m for m in data["matches"] if m.get("matchday") is not None]
         matchday = max((m["matchday"] for m in finished), default=None)

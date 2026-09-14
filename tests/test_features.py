@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from features import build_features, FEATURE_NAMES  # noqa: E402
+from features import build_features, latest_team_form, FEATURE_NAMES  # noqa: E402
 
 
 def _match(match_id, date, home, away, hg, ag):
@@ -74,3 +74,48 @@ def test_feature_value_matches_hand_computed_average():
     assert row["home_form_points"] == 3.0
     assert row["home_form_gf"] == 2.0
     assert row["home_form_ga"] == 0.0
+
+
+def _team_matches(team, dates):
+    """team이 주어진 날짜마다 홈에서 한 경기씩 치른 기록."""
+    return pd.DataFrame([
+        _match(i, d, team, f"상대{i}", hg=3, ag=0) for i, d in enumerate(dates)
+    ])
+
+
+def test_form_uses_records_from_across_the_summer_break():
+    """여름 휴식기를 건너뛴 기록은 '최근 폼'으로 인정한다 — 지난 시즌부터 계속 리그에 있던
+    팀은 시즌 초에 5경기 창이 넉 달 전까지 거슬러 올라가는 게 정상이다."""
+    recent = pd.Timestamp.now(tz="UTC")
+    dates = [recent - pd.Timedelta(days=d) for d in (119, 117, 10, 5, 2)]
+    form = latest_team_form(_team_matches("계속있던팀", dates), "계속있던팀")
+    assert form is not None
+    assert form["points"] == 3.0
+
+
+def test_form_is_refused_when_only_long_stale_records_exist():
+    """한 시즌을 리그 밖에서 보내고 돌아온 팀은 폼을 계산하지 않아야 한다.
+
+    경기 수만 세면 15개월 전 기록 5경기도 조건을 통과해서, 강등됐다 승격한 팀의 2년 전
+    성적이 '최근 폼'으로 예측에 들어간다. 실제로 2026-27 개막 시점 Ipswich Town이 이
+    상태였다 — 5경기 창이 475일에 걸쳐 있었다. 기록이 없어서 예측을 못 하는 것과, 아주
+    오래된 기록으로 예측을 만들어내는 것 중에는 전자가 정직하다."""
+    recent = pd.Timestamp.now(tz="UTC")
+    dates = [recent - pd.Timedelta(days=d) for d in (475, 473, 470, 468, 465)]
+    assert latest_team_form(_team_matches("돌아온팀", dates), "돌아온팀") is None
+
+
+def test_form_age_is_measured_on_the_oldest_match_in_the_window():
+    """창 안에 최신 경기가 섞여 있어도, 가장 오래된 경기가 기준을 넘으면 거부한다 —
+    평균이 오래된 기록에 그만큼 끌려가기 때문이다."""
+    recent = pd.Timestamp.now(tz="UTC")
+    dates = [recent - pd.Timedelta(days=d) for d in (475, 5, 4, 3, 2)]
+    assert latest_team_form(_team_matches("복귀팀", dates), "복귀팀") is None
+
+
+def test_form_works_on_timezone_naive_dates():
+    """tz 정보가 없는 날짜로도 계산이 되어야 한다 — 경과 일수 비교에서 tz-aware와
+    tz-naive를 섞으면 TypeError가 난다."""
+    recent = pd.Timestamp.now()
+    dates = [recent - pd.Timedelta(days=d) for d in (20, 15, 10, 5, 2)]
+    assert latest_team_form(_team_matches("naive팀", dates), "naive팀") is not None

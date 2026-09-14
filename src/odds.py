@@ -17,6 +17,7 @@ accuracy 55%대, 기존 폼 기반 모델은 40%대.
 """
 import io
 import json
+import math
 import os
 import threading
 import time
@@ -136,12 +137,22 @@ def _fetch_live_odds_from_api(api_key: str) -> list[dict]:
         for bk in m.get("bookmakers", []):
             outcomes = {}
             for market in bk.get("markets", []):
-                if market["key"] != "h2h":
+                if market.get("key") != "h2h":
                     continue
-                for o in market["outcomes"]:
-                    outcomes[o["name"]] = o["price"]
-            if home_raw in outcomes and away_raw in outcomes and "Draw" in outcomes:
-                probs.append(_devig(outcomes[home_raw], outcomes["Draw"], outcomes[away_raw]))
+                for o in market.get("outcomes") or []:
+                    outcomes[o.get("name")] = o.get("price")
+            prices = (outcomes.get(home_raw), outcomes.get("Draw"), outcomes.get(away_raw))
+            # 북메이커 하나의 가격이 이상하면 그 북메이커만 건너뛴다. _devig는 1/가격을
+            # 계산하므로 0이나 null이 들어오면 예외가 나는데, 이 루프 밖으로 예외가 새면
+            # 그 경기뿐 아니라 응답에 실린 모든 경기의 배당률이 함께 버려지고 15분 backoff까지
+            # 걸린다 — 정상 북메이커 20곳의 가격이 이상치 하나 때문에 사라진다.
+            # 십진 배당률은 정의상 1보다 커야 한다(1.0이면 수익이 0). bool은 int의 하위
+            # 타입이라 True가 1로 통과하는 걸 막기 위해 따로 제외한다. 무한대도 막는다 —
+            # inf는 1보다 크다는 비교를 통과하는데, 세 가격이 모두 inf면 확률 합이 0이 돼
+            # _devig에서 0으로 나누는 예외가 나고 응답 전체가 버려진다.
+            if not all(type(p) in (int, float) and math.isfinite(p) and p > 1.0 for p in prices):
+                continue
+            probs.append(_devig(*prices))
         if not probs:
             continue
         avg = pd.DataFrame(probs, columns=["p_home", "p_draw", "p_away"]).mean()
@@ -152,22 +163,67 @@ def _fetch_live_odds_from_api(api_key: str) -> list[dict]:
             "odds_p_draw": avg["p_draw"],
             "odds_p_away": avg["p_away"],
             "bookmaker_count": len(probs),
+            # 킥오프 시각을 같이 저장한다. 배당률 캐시는 최대 6시간(장애 시 그보다 오래)
+            # 살아있으므로, 받을 때는 시작 전이었던 경기가 쓸 때는 이미 진행 중일 수 있다.
+            # 이 값이 없으면 그걸 가려낼 방법이 없다 — _to_odds_map이 이 값으로 걸러낸다.
+            "commence_time": m.get("commence_time"),
         })
     return results
 
 
-def _read_live_cache() -> list[dict] | None:
-    if not ODDS_LIVE_CACHE_PATH.exists():
+def _read_live_cache() -> tuple[list[dict], float] | None:
+    """캐시 내용과 "기록된 뒤 흐른 초"를 함께 돌려준다. 파일이 없거나 내용이 깨져 있으면
+    "캐시 없음"(None)으로 취급한다.
+
+    깨진 파일을 예외로 올리지 않는 이유: 이 함수는 fetch_upcoming_odds의 try 블록 밖에서
+    먼저 불리므로, 여기서 예외가 나면 배당률 경로가 통째로 실패하고 새로 받아오는 시도조차
+    하지 않는다 — 캐시 파일이 한 번 깨지면 스스로 복구되지 않는 상태로 남는다. None을
+    돌려주면 아래 로직이 그대로 "새로 받아오기"로 흘러가 파일을 정상 내용으로 덮어쓴다
+    (fetch_data.py의 is_cached_file_valid가 손상된 시즌 캐시를 다루는 방식과 같은 방침).
+
+    내용과 기록 시각을 하나의 열린 파일에서 같이 뽑는 이유: 따로 읽으면 그 사이에 다른
+    스레드가 os.replace로 파일을 갈아치울 수 있고, 그러면 낡은 내용에 새 파일의 시각이
+    붙어서 이미 만료된 배당률이 "신선함"으로 통과한다. 같은 핸들에서 읽으면 둘이 반드시
+    같은 파일을 가리킨다."""
+    try:
+        with ODDS_LIVE_CACHE_PATH.open("rb") as fh:
+            raw = fh.read()
+            mtime = os.fstat(fh.fileno()).st_mtime
+        cached = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
         return None
-    return json.loads(ODDS_LIVE_CACHE_PATH.read_text())
+    if not isinstance(cached, list):
+        return None
+    return cached, time.time() - mtime
 
 
 def _to_odds_map(records: list[dict], stale: bool) -> dict[tuple[str, str], dict]:
     """레코드 리스트를 (home_team, away_team) 키 dict로 바꾸면서 stale 여부를 얹는다.
     stale=True는 "TTL 지난 캐시를 API 장애로 어쩔 수 없이 재사용했다"는 뜻 — 호출자가
     이걸 신선한 배당률과 구분해서, 오래된 숫자로 이미 저장된 최신 예측을 되돌리는 걸
-    막을 수 있게 한다."""
-    return {(r["home_team"], r["away_team"]): {**r, "stale": stale} for r in records}
+    막을 수 있게 한다.
+
+    이미 킥오프한 경기는 여기서 버린다. 배당률 제공사는 진행 중인 경기의 배당률도 함께
+    내려주는데, 그 숫자에는 현재 스코어가 이미 반영돼 있다 — 후반에 0-2로 지고 있는 팀의
+    승리 확률이 낮게 나오는 건 '예측'이 아니라 '중간 결과 요약'이다. 실제로 13시에 시작한
+    경기의 배당률이 13시 22분 캐시에 들어있었다. 킥오프 전 예측만 기록에 남긴다는 이 서비스의
+    전제(daily_predict.py의 채점 규칙과 동일)를 지키려면 모든 반환 경로에서 걸러야 하므로,
+    여섯 군데 return을 모두 지나가는 이 함수 한 곳에서 처리한다.
+
+    킥오프 시각이 없거나 형식이 깨진 레코드도 버린다 — 시작 전인지 확인할 수 없는 배당률을
+    통과시키는 쪽이 더 위험하다. 이 필드가 없는 캐시는 이 수정 이전에 만들어진 것이므로
+    이미 TTL이 지났고, 다음 갱신 때 필드가 있는 내용으로 덮어써진다."""
+    now = pd.Timestamp.now(tz="UTC")
+    out = {}
+    for r in records:
+        try:
+            kickoff = pd.Timestamp(r.get("commence_time"))
+        except (ValueError, TypeError):
+            continue
+        if pd.isna(kickoff) or kickoff.tz is None or kickoff <= now:
+            continue
+        out[(r["home_team"], r["away_team"])] = {**r, "stale": stale}
+    return out
 
 
 def fetch_upcoming_odds(api_key: str | None = None) -> dict[tuple[str, str], dict]:
@@ -179,20 +235,17 @@ def fetch_upcoming_odds(api_key: str | None = None) -> dict[tuple[str, str], dic
     같은 시간대에 중복 호출하지 않는다"까지다 — 인스턴스 전체의 총 호출량까지 이
     캐시만으로 제한할 수는 없다. 트래픽이 늘면 공유 캐시(Firestore/Redis 등)가 필요하다.
     """
-    _lock_free_cached = _read_live_cache()
-    if _lock_free_cached is not None:
-        age = time.time() - ODDS_LIVE_CACHE_PATH.stat().st_mtime
-        if age < LIVE_CACHE_TTL_SECONDS:
-            return _to_odds_map(_lock_free_cached, stale=False)
+    lock_free = _read_live_cache()
+    if lock_free is not None and lock_free[1] < LIVE_CACHE_TTL_SECONDS:
+        return _to_odds_map(lock_free[0], stale=False)
 
     global _last_failure_at
     with _fetch_lock:
         # 락을 얻는 동안 다른 스레드가 이미 갱신했을 수 있으니 다시 확인한다.
-        cached = _read_live_cache()
-        if cached is not None:
-            age = time.time() - ODDS_LIVE_CACHE_PATH.stat().st_mtime
-            if age < LIVE_CACHE_TTL_SECONDS:
-                return _to_odds_map(cached, stale=False)
+        entry = _read_live_cache()
+        cached = entry[0] if entry is not None else None
+        if entry is not None and entry[1] < LIVE_CACHE_TTL_SECONDS:
+            return _to_odds_map(cached, stale=False)
 
         # 직전 호출이 실패했다면 backoff 동안은 아예 부르지 않는다. 실패해도 캐시 파일의
         # mtime은 그대로라 TTL이 계속 만료 상태로 남는데, 이 게이트가 없으면 API가 죽어

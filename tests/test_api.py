@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from fastapi.testclient import TestClient
-from api import app  # noqa: E402
+from api import app, MAX_REQUEST_ID_LENGTH  # noqa: E402
 
 
 @pytest.fixture
@@ -93,3 +93,20 @@ def test_predict_ignores_stale_odds_and_uses_form_model(client, monkeypatch):
     resp = client.post("/predict", json={"home_team": home, "away_team": away})
     assert resp.status_code == 200
     assert captured["odds"] is None  # stale 배당률은 버려졌다
+
+
+def test_request_id_is_passed_through_for_tracing(client):
+    """클라이언트가 보낸 추적 ID는 그대로 이어받아 응답에 되돌려줘야 한다(분산 추적)."""
+    resp = client.get("/health", headers={"X-Request-ID": "trace-abc-123"})
+    assert resp.headers["X-Request-ID"] == "trace-abc-123"
+
+
+def test_overlong_request_id_is_replaced_instead_of_echoed(client):
+    """과도하게 긴 추적 ID는 버리고 새로 발급한다.
+
+    이 값은 클라이언트가 정하는데 로그 한 줄과 응답 헤더에 그대로 실린다 — 제한이 없으면
+    요청 하나로 Cloud Logging에 10만 자를 쓰게 만들 수 있고(과금), 응답 크기도 같이 부풀린다."""
+    resp = client.get("/health", headers={"X-Request-ID": "A" * 100_000})
+    returned = resp.headers["X-Request-ID"]
+    assert len(returned) <= MAX_REQUEST_ID_LENGTH
+    assert "A" * 100 not in returned

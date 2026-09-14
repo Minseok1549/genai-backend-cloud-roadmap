@@ -76,9 +76,14 @@ def _extract_json_trailer(text: str, prefix: str) -> dict:
         search_from = idx + 1
     if start is None:
         raise ValueError(f"Gemini 응답에서 {prefix}를 찾을 수 없습니다")
-    brace_start = text.find("{", start)
-    if brace_start == -1:
-        raise ValueError(f"Gemini 응답에서 {prefix}를 찾을 수 없습니다")
+    # 여는 중괄호는 이 마커의 값 자리에 있는 것만 인정한다. 마커 뒤에서 무조건 첫 '{'를
+    # 찾으면, 값이 null이거나 비어 있을 때 한참 아래에 있는 다른 JSON 블록을 집어와 그걸
+    # 예측이라고 내놓는다 — 엉뚱한 숫자가 예측 확률로 대시보드에 실린다. 마커와 '{' 사이에
+    # 공백이나 코드펜스(```json) 말고 다른 내용이 있으면 값이 JSON 객체가 아닌 것으로 본다.
+    value_start = start + len(marker)
+    brace_start = text.find("{", value_start)
+    if brace_start == -1 or text[value_start:brace_start].strip(" \t\r\n`").lower() not in ("", "json"):
+        raise ValueError(f"Gemini 응답의 {prefix} 값이 JSON 객체가 아닙니다")
     try:
         obj, _ = json.JSONDecoder().raw_decode(text, brace_start)
     except json.JSONDecodeError as e:
@@ -148,6 +153,12 @@ PREDICTION_JSON: {{"home_win": 0.00, "draw": 0.00, "away_win": 0.00, "headline":
 def _extract_prediction(text: str) -> tuple[dict, str, list[dict]]:
     """응답의 PREDICTION_JSON을 파싱해 확률·총평(headline)·근거 포인트를 뽑는다."""
     raw = _extract_json_trailer(text, "PREDICTION_JSON")
+    # JSON의 true/false를 확률로 받아들이면 안 된다. bool은 int의 하위 타입이라 float(True)가
+    # 1.0으로 조용히 통과하고, 그러면 "home_win": true 한 줄이 "홈 승리 100%"라는 예측이 돼
+    # 아래 범위·합계 검사까지 전부 지나쳐 대시보드에 그대로 실린다. 숫자를 인용부호로 감싼
+    # 경우("0.55")는 계속 허용한다 — 모델이 자주 그러고 뜻이 모호하지 않다.
+    if any(isinstance(raw.get(name), bool) for name in ("home_win", "draw", "away_win")):
+        raise ValueError("Gemini 확률 값이 숫자가 아니라 true/false로 왔습니다")
     home, draw, away = float(raw["home_win"]), float(raw["draw"]), float(raw["away_win"])
     for name, value in (("home_win", home), ("draw", draw), ("away_win", away)):
         if not (0.0 <= value <= 1.0):

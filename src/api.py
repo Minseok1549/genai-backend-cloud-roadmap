@@ -57,13 +57,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+MAX_REQUEST_ID_LENGTH = 200  # 분산 추적 ID로 쓰이는 형식(UUID 36자, W3C traceparent 55자)에 넉넉한 상한
+
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     # 클라이언트나 로드밸런서가 이미 요청 ID를 붙여왔으면 그걸 그대로 잇는다(분산 추적) —
     # 없으면 새로 발급한다. 응답 헤더에도 실어서, 호출한 쪽이 이 값을 자기 로그와
     # 대조할 수 있게 한다.
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    # 길이는 제한한다. 이 값은 클라이언트가 정하는데 로그 한 줄과 응답 헤더에 그대로 실리므로,
+    # 10만 자를 보내면 요청 하나가 Cloud Logging에 10만 자를 쓰고 응답에도 되돌려준다(실측).
+    # 추적 ID로 쓰이는 UUID는 36자면 충분해서, 넘는 값은 클라이언트 것을 버리고 새로 발급한다.
+    # 개행을 섞은 헤더 주입은 HTTP 계층에서 이미 막히는 걸 확인했으므로 따로 검사하지 않는다.
+    incoming = request.headers.get("X-Request-ID", "")
+    request_id = incoming if 0 < len(incoming) <= MAX_REQUEST_ID_LENGTH else str(uuid.uuid4())
     request.state.request_id = request_id
     start = time.monotonic()
     response = await call_next(request)

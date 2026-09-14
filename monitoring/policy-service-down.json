@@ -1,0 +1,35 @@
+{
+  "displayName": "epl-predictor: 서비스 응답 없음",
+  "documentation": {
+    "content": "외부에서 5분마다 /health를 두드리는 uptime check가 실패했다. 서비스가 완전히 죽었거나 배포가 잘못된 리비전으로 넘어간 상황이다. 조치: notes/runbook.md의 2번 롤백 절차.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "/health uptime check 실패",
+      "conditionThreshold": {
+        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND resource.type=\"uptime_url\" AND metric.label.\"check_id\"=\"CHECK_ID_HEALTH\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_NEXT_OLDER",
+            "crossSeriesReducer": "REDUCE_COUNT_FALSE",
+            "groupByFields": ["resource.label.*"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 1,
+        "duration": "60s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "notificationChannels": ["CHANNEL"],
+  "alertStrategy": {
+    "autoClose": "604800s"
+  },
+  "enabled": true
+}

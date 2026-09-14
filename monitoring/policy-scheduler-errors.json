@@ -1,0 +1,24 @@
+{
+  "displayName": "epl-predictor: 배치 트리거 실패",
+  "documentation": {
+    "content": "Cloud Scheduler가 Job을 실행시키려다 실패했다(권한 오류, Job 이름 변경 등). Job 자체는 시작조차 못 했으므로 '배치 실패' 알림에는 걸리지 않고, 26시간을 기다리는 '아예 돌지 않음' 알림보다 훨씬 빨리 알 수 있다. 조치: 스케줄러 작업의 서비스 계정 권한과 대상 Job 이름 확인.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "스케줄러 실행 오류",
+      "conditionMatchedLog": {
+        "filter": "resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"epl-daily-predict-trigger\" AND severity>=ERROR"
+      }
+    }
+  ],
+  "combiner": "OR",
+  "notificationChannels": ["CHANNEL"],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "3600s"
+    },
+    "autoClose": "604800s"
+  },
+  "enabled": true
+}

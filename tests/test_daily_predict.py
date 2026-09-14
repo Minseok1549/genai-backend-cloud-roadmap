@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -14,6 +13,23 @@ import data as data_module  # noqa: E402
 from data import load_fixtures_on_date  # noqa: E402
 import daily_predict  # noqa: E402
 from predictor import UnknownTeamError  # noqa: E402
+
+
+# 아래 autouse 픽스처가 모듈 속성을 바꿔치우므로, 함수 자체를 검사하는 테스트를 위해
+# 진짜 구현을 import 시점에 붙잡아 둔다.
+_real_write_heartbeat = daily_predict.write_heartbeat
+
+
+@pytest.fixture(autouse=True)
+def heartbeat_calls(monkeypatch):
+    """main()이 끝에 GCS로 쓰는 하트비트를 기록만 하고 넘어가게 한다.
+
+    main()을 태우는 테스트는 대부분 업로드 경로나 병합 로직을 보는 것이고, 하트비트는 그
+    관심사와 무관하게 실제 GCS 호출을 일으킨다. 하트비트가 언제 기록되는지는 이 리스트를
+    받아보는 전용 테스트에서 확인한다."""
+    calls = []
+    monkeypatch.setattr(daily_predict, "write_heartbeat", lambda: calls.append(True))
+    return calls
 
 
 def _iso(hours_from_now: float) -> str:
@@ -758,15 +774,19 @@ def test_fetch_upcoming_odds_marks_stale_cache_fallback(tmp_path, monkeypatch):
     import odds as odds_module
 
     cache_path = tmp_path / "odds_live_cache.json"
-    cache_path.write_text(json.dumps([
+    cache_path.write_text(json.dumps({
+        # 받아온 시각을 TTL보다 한 시간 더 전으로 둬서 만료 상태를 만든다.
+        "fetched_at": time.time() - odds_module.LIVE_CACHE_TTL_SECONDS - 3600,
         # commence_time은 먼 미래로 둔다 — 이미 킥오프한 경기의 배당률은 걸러지므로,
         # 시각이 지나간 값이면 이 테스트가 시간이 흐른 뒤 조용히 빈 결과를 받는다.
-        {"home_team": "A", "away_team": "B", "odds_p_home": 0.5, "odds_p_draw": 0.3,
-         "odds_p_away": 0.2, "bookmaker_count": 3, "commence_time": "2099-01-01T00:00:00Z"}
-    ]))
-    old_mtime = time.time() - odds_module.LIVE_CACHE_TTL_SECONDS - 3600
-    os.utime(cache_path, (old_mtime, old_mtime))
+        "records": [
+            {"home_team": "A", "away_team": "B", "odds_p_home": 0.5, "odds_p_draw": 0.3,
+             "odds_p_away": 0.2, "bookmaker_count": 3, "commence_time": "2099-01-01T00:00:00Z"}
+        ],
+        "failed_at": None,
+    }))
 
+    monkeypatch.delenv("PREDICTIONS_BUCKET", raising=False)  # 공유 캐시(GCS) 경로를 타지 않게 한다
     monkeypatch.setattr(odds_module, "ODDS_LIVE_CACHE_PATH", cache_path)
 
     def fail_api(api_key):
@@ -1103,3 +1123,76 @@ def test_merge_compares_times_not_strings(monkeypatch):
     merged = daily_predict.merge_predictions(existing, [newer])
 
     assert merged[0]["probabilities"]["HOME_TEAM"] == 0.7
+
+
+def test_main_records_a_heartbeat_after_a_successful_run(monkeypatch, heartbeat_calls):
+    """배치가 끝까지 성공하면 성공 시각을 남겨야 한다 — /health/batch가 이 기록을 읽어
+    "배치가 멈췄다"를 알림으로 바꾸므로, 기록이 없으면 정상인데도 장애로 보인다."""
+    monkeypatch.setattr(daily_predict, "GCS_BUCKET", "test-bucket")
+    monkeypatch.setattr(daily_predict, "build_predictions_by_date", lambda: {})
+    monkeypatch.setattr(daily_predict, "build_and_upload_scorecard", lambda: None)
+    monkeypatch.setattr(daily_predict, "log_json", lambda *a, **k: None)
+
+    daily_predict.main()
+
+    assert heartbeat_calls == [True]
+
+
+def test_main_does_not_record_a_heartbeat_when_an_upload_failed(monkeypatch, heartbeat_calls):
+    """업로드가 실패해 Job이 실패로 끝나는 실행은 성공으로 기록하면 안 된다 — 그러면
+    "배치가 돌긴 했다"로 보여서 예측이 비어 있는데도 알림이 뜨지 않는다."""
+    payload_by_date = {
+        "2026-09-06": {
+            "date": "2026-09-06", "generated_at": "2026-09-06T00:00:00Z",
+            "predictions": [{"match_id": 1, "probabilities": {}}],
+            "_new_predictions": [{"match_id": 1, "probabilities": {}}],
+            "_generation": 5, "_existing_predictions": [],
+        }
+    }
+    monkeypatch.setattr(daily_predict, "GCS_BUCKET", "test-bucket")
+    monkeypatch.setattr(daily_predict, "build_predictions_by_date", lambda: payload_by_date)
+    monkeypatch.setattr(daily_predict, "build_and_upload_scorecard", lambda: None)
+    monkeypatch.setattr(daily_predict, "log_json", lambda *a, **k: None)
+
+    def always_conflicts(payload, date, if_generation_match):
+        raise PreconditionFailed("conflict")
+
+    monkeypatch.setattr(daily_predict, "upload_to_gcs", always_conflicts)
+    monkeypatch.setattr(daily_predict, "fetch_existing_predictions", lambda date: (None, 0))
+
+    with pytest.raises(SystemExit):
+        daily_predict.main()
+
+    assert heartbeat_calls == []
+
+
+def test_write_heartbeat_stores_the_completion_time(monkeypatch):
+    """하트비트에는 배치가 끝난 시각이 UTC로 들어가야 한다 — /health/batch가 이 값과 현재
+    시각의 차이로 신선도를 판단한다."""
+    uploaded = {}
+
+    class FakeBlob:
+        def upload_from_string(self, data, content_type=None):
+            uploaded["data"] = data
+            uploaded["content_type"] = content_type
+
+    class FakeBucket:
+        def blob(self, path):
+            uploaded["path"] = path
+            return FakeBlob()
+
+    class FakeClient:
+        def bucket(self, name):
+            uploaded["bucket"] = name
+            return FakeBucket()
+
+    monkeypatch.setattr(daily_predict.storage, "Client", FakeClient)
+    monkeypatch.setattr(daily_predict, "GCS_BUCKET", "test-bucket")
+    monkeypatch.setattr(daily_predict, "log_json", lambda *a, **k: None)
+
+    _real_write_heartbeat()
+
+    assert uploaded["path"] == daily_predict.HEARTBEAT_PATH
+    completed_at = datetime.fromisoformat(json.loads(uploaded["data"])["completed_at"])
+    assert completed_at.tzinfo is not None
+    assert abs((datetime.now(timezone.utc) - completed_at).total_seconds()) < 60

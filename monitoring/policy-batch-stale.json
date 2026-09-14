@@ -1,0 +1,35 @@
+{
+  "displayName": "epl-predictor: 매일 배치가 멈춤",
+  "documentation": {
+    "content": "/health/batch가 503을 돌려줬다. 매일 예측 배치가 30시간 넘게 한 번도 성공하지 못했다는 뜻이다.\n\n'배치 실패' 알림과 다른 상황을 잡는다 — 스케줄러가 멈추거나 삭제되면 Job은 실패조차 하지 않고 조용히 안 돌기 때문에 실패 알림에 걸리지 않는다. 대시보드는 예전 예측을 계속 보여주므로 겉으로는 정상처럼 보이고, 이게 이 서비스에서 가장 알아차리기 어려운 장애다.\n\nCloud Monitoring의 지표 부재(metric absence) 조건으로 잡는 게 정석이지만 그 조건은 최대 23시간 30분까지만 기다릴 수 있어, 24시간마다 도는 배치에는 정상인 날에도 매일 알림이 뜬다. 그래서 배치가 성공할 때 GCS에 남기는 시각을 /health/batch가 읽어 상태 코드로 바꾸고, uptime check로 감시한다.\n\n조치: notes/runbook.md 3번(Job 상태 확인)과 Cloud Scheduler 작업(epl-daily-predict-trigger)이 살아있는지 확인.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "/health/batch uptime check 실패",
+      "conditionThreshold": {
+        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND resource.type=\"uptime_url\" AND metric.label.\"check_id\"=\"CHECK_ID_BATCH\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_NEXT_OLDER",
+            "crossSeriesReducer": "REDUCE_COUNT_FALSE",
+            "groupByFields": ["resource.label.*"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 1,
+        "duration": "900s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "notificationChannels": ["CHANNEL"],
+  "alertStrategy": {
+    "autoClose": "604800s"
+  },
+  "enabled": true
+}

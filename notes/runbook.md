@@ -13,17 +13,42 @@
 
 ## 1. 헬스체크 실패를 어떻게 알아차리는가
 
-**지금 이 스프린트 스코프에서는 자동 알림(alerting)이 설정돼 있지 않다.** 실제
-프로덕션이라면 Cloud Monitoring의 Uptime Check + Alerting Policy(또는 AWS의
-Route 53 Health Check + CloudWatch Alarm, Azure의 Application Insights 가용성
-테스트 — 이름은 다르지만 "주기적으로 외부에서 두드려보고, 실패하면 알림"이라는
-원리는 동일)를 붙이는 게 맞다. 이건 이번 스코프 밖이라 아래는 수동 확인 절차다.
+**자동 알림이 설정돼 있다 — 아래 5가지 상황에서 `kimms8228@gmail.com`으로 메일이
+온다.** 설정 내용은 `monitoring/` 디렉터리에 JSON으로 들어 있고, `monitoring/apply.sh`를
+돌리면 그 정의대로 다시 맞춰진다(여러 번 돌려도 중복이 생기지 않는다).
+
+| 알림 | 감지하는 상황 | 감지 방식 |
+|---|---|---|
+| 서비스 응답 없음 | 서비스가 완전히 죽었거나 잘못된 리비전으로 넘어갔다 | 5분마다 외부에서 `/health` 호출 |
+| 서비스 에러 로그 | 응답은 하지만 특정 요청이 실패한다 | 로그에 error 레벨이 찍히면 |
+| 매일 배치 실패 | 배치 태스크가 실패로 끝났다 | Job 실패 지표 |
+| 매일 배치가 멈춤 | 배치가 30시간 넘게 성공하지 못했다 | 5분마다 `/health/batch` 호출 |
+| 배치 트리거 실패 | 스케줄러가 Job을 실행시키지 못했다 | 스케줄러 에러 로그 |
+
+네 번째가 가장 알아차리기 어려운 장애를 담당한다. 스케줄러가 멈추면 Job은 실패조차
+하지 않고 조용히 안 돌기 때문에 "배치 실패" 알림에 걸리지 않고, 대시보드는 예전 예측을
+그대로 보여줘서 겉으로는 정상처럼 보인다. 그래서 배치가 성공할 때 GCS에
+`batch/last_success.json`을 남기고, `/health/batch`가 그 시각이 30시간 이내인지를
+상태 코드로 답하게 했다(오래됐으면 503). Cloud Monitoring의 "지표 부재" 조건으로 잡는
+것이 정석이지만 그 조건은 최대 23시간 30분까지만 기다릴 수 있어서, 24시간마다 도는
+배치에는 정상인 날에도 매일 오탐이 난다.
+
+다른 클라우드에서 같은 구성을 하려면: AWS는 Route 53 Health Check + CloudWatch
+Alarm + SNS(메일), Azure는 Application Insights 가용성 테스트 + Action Group이다.
+이름은 달라도 "주기적으로 외부에서 두드려보고, 실패하면 알림"이라는 원리는 같다.
 
 **수동으로 지금 살아있는지 확인:**
 ```bash
 curl -sS -w "\nstatus: %{http_code}\n" https://epl-predictor-187506981041.asia-northeast3.run.app/health
 ```
 `{"status":"ok"}`와 `status: 200`이 아니면 장애다.
+
+**매일 배치가 정상적으로 돌고 있는지 확인:**
+```bash
+curl -sS -w "\nstatus: %{http_code}\n" https://epl-predictor-187506981041.asia-northeast3.run.app/health/batch
+```
+`last_success`가 마지막으로 배치가 성공한 시각, `age_hours`가 그로부터 흐른 시간이다.
+30시간을 넘으면 `status: stale`과 503이 되고 알림 메일이 간다.
 
 **최근 리비전들의 상태 확인:**
 ```bash

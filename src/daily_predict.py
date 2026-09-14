@@ -330,6 +330,7 @@ MAX_UPLOAD_RETRIES = 3  # 배치는 하루 한 번만 도는 게 정상이라 �
 
 
 SCORECARD_PATH = "scorecard.json"
+HEARTBEAT_PATH = "batch/last_success.json"
 
 
 def _all_prediction_dates() -> list[str]:
@@ -389,6 +390,25 @@ def build_and_upload_scorecard() -> dict | None:
     )
     log_json("info", "scorecard uploaded", graded_matches=card["graded_matches"])
     return card
+
+
+def write_heartbeat() -> None:
+    """배치가 끝까지 성공했다는 사실과 그 시각을 GCS에 남긴다.
+
+    이 파일은 "배치가 실패했다"가 아니라 "배치가 아예 돌지 않았다"를 알아차리기 위한 것이다.
+    스케줄러가 멈추거나 삭제되면 Job은 실패조차 하지 않으므로 실패 알림에 걸리지 않고, 예측이
+    며칠씩 비는 걸 아무도 모르게 된다. Cloud Monitoring의 '지표 부재(metric absence)' 조건으로
+    잡으려 했지만 그 조건은 최대 23시간 30분까지만 기다릴 수 있어, 24시간마다 도는 배치에는
+    정상인 날에도 매일 알림이 뜬다 — 그래서 부재 감시 대신 이 하트비트를 /health/batch가
+    읽고 uptime check가 그 엔드포인트를 보는 구조로 돌렸다.
+
+    예측 파일(predictions/YYYY-MM-DD.json)의 최신 날짜로 대신 판단하지 않는 이유: 예정 경기가
+    없거나 배당률이 거의 안 움직인 날은 올릴 게 없어서 파일을 새로 쓰지 않는다. 그건 정상
+    동작인데 "배치가 안 돌았다"와 구별되지 않는다. 그래서 성공 사실만 따로 기록한다."""
+    payload = {"completed_at": datetime.now(timezone.utc).isoformat()}
+    blob = storage.Client().bucket(GCS_BUCKET).blob(HEARTBEAT_PATH)
+    blob.upload_from_string(json.dumps(payload), content_type="application/json")
+    log_json("info", "batch heartbeat written", completed_at=payload["completed_at"])
 
 
 def main() -> None:
@@ -453,6 +473,8 @@ def main() -> None:
         # Cloud Run Job이 실패를 인지하고 재시도하도록 non-zero로 종료한다 — 로그만 남기고
         # 정상 종료하면 그날 예측이 저장 안 됐는데도 Job은 "성공"으로 기록돼 아무도 모르게 된다.
         sys.exit(1)
+
+    write_heartbeat()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,14 @@
 """예측 기록을 Postgres에 저장한다.
 
+현재 배포 환경에서는 이 모듈이 의도적으로 꺼져 있다. DATABASE_URL을 주지 않았으므로
+api.py의 startup이 "database unavailable at startup"만 남기고 지나가고, 예측 기록은 전부
+GCS(predictions/YYYY-MM-DD.json)에 남는다. 이유는 비용과 용도 둘 다다. 하루 10~20건씩
+날짜별 JSON으로 쌓고 날짜나 라운드로 통째로 읽어가는 게 이 서비스가 하는 접근의 전부여서
+관계형 질의가 필요한 곳이 없고, Cloud SQL은 가장 작은 인스턴스도 쓰지 않는 동안 계속
+요금이 붙는다(scale-to-zero가 안 되므로 트래픽이 없어도 월 단위 고정비가 생긴다) — 반면
+GCS는 이 규모에서 사실상 0원이다. 여러 조건을 섞은 집계나 동시 쓰기 정합성이 실제로
+필요해지는 시점에 DATABASE_URL만 주면 이 경로가 그대로 살아난다.
+
 Alembic 같은 마이그레이션 도구는 이 프로젝트 규모에서 과한 스코프라 안 쓴다 —
 predictions 테이블은 CREATE TABLE IF NOT EXISTS로 충분하고, 구조가 바뀌면
 SCHEMA_VERSION을 올리고 각 행에 그 값을 같이 저장해 나중에 "이 행이 어떤

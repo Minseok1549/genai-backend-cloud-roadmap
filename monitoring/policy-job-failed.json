@@ -1,0 +1,34 @@
+{
+  "displayName": "epl-predictor: 매일 배치 실패",
+  "documentation": {
+    "content": "epl-daily-predict Job의 태스크가 실패로 끝났다. 이날의 예측이 GCS에 올라가지 않았다는 뜻이므로 대시보드에 그 날짜가 비어 보인다. 조치: notes/runbook.md 3번(Job 상태 확인)으로 실패 로그를 본 뒤 필요하면 Job을 수동 실행.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "실패로 끝난 태스크가 있다",
+      "conditionThreshold": {
+        "filter": "metric.type=\"run.googleapis.com/job/completed_task_attempt_count\" AND resource.type=\"cloud_run_job\" AND resource.label.\"job_name\"=\"epl-daily-predict\" AND metric.label.\"result\"=\"failed\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "600s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "notificationChannels": ["CHANNEL"],
+  "alertStrategy": {
+    "autoClose": "604800s"
+  },
+  "enabled": true
+}

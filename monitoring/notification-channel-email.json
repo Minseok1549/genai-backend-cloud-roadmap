@@ -1,0 +1,9 @@
+{
+  "type": "email",
+  "displayName": "epl-predictor 운영 알림",
+  "description": "서비스가 죽거나 매일 배치가 실패하면 이 주소로 메일이 간다. 이 디렉터리의 알림 정책이 모두 이 채널을 참조하므로, 주소를 바꿀 때는 채널을 새로 만드는 대신 이 채널의 labels.email_address를 수정하는 쪽이 정책을 건드리지 않아도 되어 안전하다.",
+  "labels": {
+    "email_address": "kimms8228@gmail.com"
+  },
+  "enabled": true
+}

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -115,6 +115,32 @@ class PredictRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+BATCH_STALE_AFTER_HOURS = 30  # 배치는 24시간마다 돈다 — 여유 6시간은 스케줄러 지연과 재시도 몫
+
+
+@app.get("/health/batch")
+def health_batch(response: Response):
+    """매일 예측 배치가 최근에 성공했는지 알려준다. 실패하면 503을 돌려준다.
+
+    /health는 웹 서비스가 살아있는지만 본다. 배치는 별개의 Cloud Run Job이라 그게 며칠째
+    돌지 않아도 /health는 계속 200이고, 대시보드도 예전 예측을 그대로 보여주기 때문에 겉으로는
+    정상처럼 보인다. 이 엔드포인트를 따로 두는 이유가 그것이고, uptime check가 이걸 5분마다
+    두드려 실패하면 메일 알림이 간다(monitoring/policy-batch-stale.json).
+
+    상태 코드로 답하는 이유: uptime check는 본문을 해석하기보다 상태 코드로 판정하는 쪽이
+    단순하고, 그렇게 두면 "배치가 멈췄다"를 웹 서비스 장애와 같은 방식으로 감시할 수 있다."""
+    heartbeat = _fetch_batch_heartbeat()
+    if heartbeat is None:
+        response.status_code = 503
+        return {"status": "unknown", "detail": "배치 성공 기록을 읽을 수 없습니다"}
+
+    age_hours = (datetime.now(timezone.utc) - heartbeat).total_seconds() / 3600
+    if age_hours > BATCH_STALE_AFTER_HOURS:
+        response.status_code = 503
+        return {"status": "stale", "last_success": heartbeat.isoformat(), "age_hours": round(age_hours, 1)}
+    return {"status": "ok", "last_success": heartbeat.isoformat(), "age_hours": round(age_hours, 1)}
 
 
 @app.post("/predict")
@@ -227,6 +253,25 @@ def _fetch_daily_predictions(date_str: str) -> dict | None:
         return None
     except Exception as e:
         log_json("warning", "failed to read daily predictions from GCS", date=date_str, error=str(e))
+        return None
+
+
+BATCH_HEARTBEAT_PATH = "batch/last_success.json"  # daily_predict.HEARTBEAT_PATH와 같은 경로
+
+
+def _fetch_batch_heartbeat() -> datetime | None:
+    """배치가 마지막으로 성공한 시각을 읽는다. 읽을 수 없으면 None.
+
+    기록이 없는 것과 오래된 것을 구분하지 않고 둘 다 "이상"으로 보는 판단은 호출자(/health/batch)
+    가 한다 — 파일이 아예 없는 상태도 "배치가 한 번도 성공하지 못했다"는 뜻이라 정상이 아니다."""
+    if not PREDICTIONS_BUCKET:
+        return None
+    try:
+        blob = _get_storage_client().bucket(PREDICTIONS_BUCKET).blob(BATCH_HEARTBEAT_PATH)
+        completed_at = json.loads(blob.download_as_text())["completed_at"]
+        return datetime.fromisoformat(completed_at)
+    except Exception as e:
+        log_json("warning", "failed to read batch heartbeat from GCS", error=str(e))
         return None
 
 

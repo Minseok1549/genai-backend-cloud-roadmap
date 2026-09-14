@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,46 @@ def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+def test_batch_health_is_ok_when_the_batch_succeeded_recently(client, monkeypatch):
+    """배치가 최근에 성공했으면 200이어야 한다."""
+    import api
+
+    recent = datetime.now(timezone.utc) - timedelta(hours=2)
+    monkeypatch.setattr(api, "_fetch_batch_heartbeat", lambda: recent)
+
+    resp = client.get("/health/batch")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+def test_batch_health_fails_when_the_batch_stopped_running(client, monkeypatch):
+    """배치가 하루 넘게 성공하지 못했으면 503이어야 한다.
+
+    이 엔드포인트의 존재 이유가 이 판정이다. 배치는 별개의 Cloud Run Job이라 며칠째 멈춰도
+    /health는 계속 200이고 대시보드도 예전 예측을 그대로 보여주므로, 겉으로는 정상처럼 보인다.
+    uptime check가 이 상태 코드를 보고 메일 알림을 띄운다."""
+    import api
+
+    stale = datetime.now(timezone.utc) - timedelta(hours=api.BATCH_STALE_AFTER_HOURS + 1)
+    monkeypatch.setattr(api, "_fetch_batch_heartbeat", lambda: stale)
+
+    resp = client.get("/health/batch")
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "stale"
+
+
+def test_batch_health_fails_when_there_is_no_record_at_all(client, monkeypatch):
+    """성공 기록을 아예 읽을 수 없는 상태도 정상이 아니다 — "한 번도 성공하지 못했다"와
+    "읽기가 실패했다"를 구분해봐야 대응이 같으므로 둘 다 503으로 알린다."""
+    import api
+
+    monkeypatch.setattr(api, "_fetch_batch_heartbeat", lambda: None)
+
+    resp = client.get("/health/batch")
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "unknown"
 
 
 def test_predict_valid_returns_probabilities_summing_to_one(client):

@@ -1,0 +1,24 @@
+{
+  "displayName": "epl-predictor: 서비스 에러 로그",
+  "documentation": {
+    "content": "서비스가 응답은 하지만 에러 레벨 로그를 남겼다. uptime check는 통과하는데 특정 요청만 실패하는 경우(모델 로드 실패, 외부 API 인증 오류 등)를 잡는 알림이다. 경고(warning) 레벨은 제외한다 — 배당률 API 일시 장애처럼 설계상 감수하고 넘어가는 상황이 warning으로 기록되므로 여기에 포함하면 알림이 노이즈가 된다. 조치: notes/runbook.md 1번의 로그 조회 명령으로 request_id를 찾아 추적.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "에러 로그 발생",
+      "conditionMatchedLog": {
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"epl-predictor\" AND severity>=ERROR"
+      }
+    }
+  ],
+  "combiner": "OR",
+  "notificationChannels": ["CHANNEL"],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "3600s"
+    },
+    "autoClose": "604800s"
+  },
+  "enabled": true
+}

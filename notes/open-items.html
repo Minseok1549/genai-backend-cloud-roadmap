@@ -1,0 +1,304 @@
+<meta charset="utf-8">
+<title>미해결 항목과 결정 사항</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --surface-2: #f0f0ed;
+    --border: #e0e0da;
+    --text: #1a1a18;
+    --text-dim: #61615c;
+    --accent: #1d4ed8;
+    --hot: #c2410c;
+    --warm: #a16207;
+    --cool: #15803d;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14141a;
+      --surface: #1d1d25;
+      --surface-2: #26262f;
+      --border: #33333d;
+      --text: #ececf0;
+      --text-dim: #9b9ba6;
+      --accent: #8ab0ff;
+      --hot: #ff9a6b;
+      --warm: #e8c26a;
+      --cool: #7fd39a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14141a;
+    --surface: #1d1d25;
+    --surface-2: #26262f;
+    --border: #33333d;
+    --text: #ececf0;
+    --text-dim: #9b9ba6;
+    --accent: #8ab0ff;
+    --hot: #ff9a6b;
+    --warm: #e8c26a;
+    --cool: #7fd39a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", system-ui, sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    padding: 2.5rem 1.25rem 5rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+
+  header { margin-bottom: 2.75rem; }
+  h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.5rem; }
+  .sub { color: var(--text-dim); font-size: 0.94rem; margin: 0; }
+  .meta {
+    margin-top: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem;
+    font-size: 0.82rem; color: var(--text-dim); font-family: var(--mono);
+  }
+
+  h2 {
+    font-size: 1.1rem; font-weight: 700; margin: 3rem 0 0.35rem;
+    display: flex; align-items: baseline; gap: 0.6rem;
+  }
+  h2 .n {
+    font-family: var(--mono); font-size: 0.78rem; color: var(--accent);
+    border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.45rem;
+    font-weight: 500; flex-shrink: 0;
+  }
+  .lede { color: var(--text-dim); font-size: 0.9rem; margin: 0 0 1.5rem; }
+
+  /* 결정 카드 */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.35rem 1.4rem; margin-bottom: 1rem;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
+  .card-head h3 { font-size: 1rem; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .tag {
+    font-size: 0.7rem; font-family: var(--mono); font-weight: 600;
+    padding: 0.12rem 0.45rem; border-radius: 4px; white-space: nowrap;
+    border: 1px solid currentColor;
+  }
+  .tag.now { color: var(--hot); }
+  .tag.soon { color: var(--warm); }
+  .tag.ok { color: var(--cool); }
+
+  .row { display: grid; grid-template-columns: 5.5rem 1fr; gap: 0.35rem 0.9rem; font-size: 0.9rem; }
+  .row dt { color: var(--text-dim); font-size: 0.82rem; padding-top: 0.12rem; }
+  .row dd { margin: 0 0 0.45rem; }
+  .row dd:last-of-type { margin-bottom: 0; }
+
+  ul.opts { list-style: none; margin: 0; padding: 0; }
+  ul.opts li { position: relative; padding-left: 1.5rem; margin-bottom: 0.3rem; }
+  ul.opts li::before {
+    content: attr(data-k); position: absolute; left: 0; top: 0;
+    font-family: var(--mono); font-size: 0.78rem; color: var(--text-dim);
+  }
+  ul.opts li.pick { font-weight: 600; }
+  ul.opts li.pick::before { color: var(--cool); }
+  ul.opts li.pick::after {
+    content: "권고"; font-size: 0.68rem; font-family: var(--mono); font-weight: 600;
+    color: var(--cool); border: 1px solid currentColor; border-radius: 3px;
+    padding: 0.05rem 0.3rem; margin-left: 0.45rem; vertical-align: 0.08em;
+  }
+
+  .calc {
+    font-family: var(--mono); font-size: 0.82rem; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.7rem 0.85rem; margin: 0.6rem 0 0; color: var(--text-dim);
+    overflow-x: auto; white-space: pre-wrap;
+  }
+  .calc b { color: var(--text); font-weight: 600; }
+
+  /* 안 고친 것 표 */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.87rem; }
+  th, td { text-align: left; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 0.76rem; color: var(--text-dim); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td.why { color: var(--text-dim); }
+  td .lv { font-family: var(--mono); font-size: 0.72rem; color: var(--text-dim); }
+  td.dec { white-space: nowrap; font-size: 0.82rem; }
+  td.dec .none { color: var(--text-dim); }
+  td.dec .yes { color: var(--hot); font-weight: 600; font-family: var(--mono); }
+
+  code {
+    font-family: var(--mono); font-size: 0.86em; background: var(--surface-2);
+    padding: 0.08em 0.32em; border-radius: 3px; border: 1px solid var(--border);
+  }
+  .note {
+    border-left: 2px solid var(--border); padding: 0.15rem 0 0.15rem 1rem;
+    color: var(--text-dim); font-size: 0.87rem; margin: 1.25rem 0 0;
+  }
+  footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border);
+           color: var(--text-dim); font-size: 0.82rem; }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>고치지 않은 것 &amp; 선택이 필요한 것</h1>
+  <p class="sub">epl-predictor 전수 조사 후 남은 항목. 고친 10건은 이미 배포·푸시됐고, 이 문서는 <strong>남은 것</strong>만 다룹니다.</p>
+  <div class="meta">
+    <span>2026-09-14</span>
+    <span>커밋 dc270b1</span>
+    <span>리비전 epl-predictor-00025-2hj</span>
+    <span>테스트 163 통과</span>
+  </div>
+</header>
+
+<h2><span class="n">A</span> 고치지 않은 것 — 5건</h2>
+<p class="lede">모두 재현 또는 코드 확인을 거친 뒤 "안 고치는 게 맞다"고 판단한 것입니다. 판단 근거를 같이 적었으니 동의하지 않는 항목은 되돌릴 수 있습니다.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>항목</th><th>실제 영향</th><th>안 고친 이유</th><th class="dec">선택 필요</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>학습·서비스 입력 불일치</strong><br><span class="lv">내 조사 / 구조적</span></td>
+  <td>배당률 모델은 과거 데이터의 <em>북메이커 1곳</em> 확률로 학습됐는데, 서비스는 <em>약 21곳 평균</em>을 넣습니다. 평균은 분산이 작아 모델의 보정이 과하거나 모자랄 수 있습니다.</td>
+  <td class="why">과거 데이터에 북메이커가 한 곳뿐입니다. 데이터를 바꾸지 않으면 코드로 해결되지 않습니다.</td>
+  <td class="dec"><span class="yes">→ 결정 3</span></td>
+</tr>
+<tr>
+  <td><strong>과거 배당률 학습 데이터가 갱신되지 않음</strong><br><span class="lv">Codex / MEDIUM</span></td>
+  <td>캐시 파일의 <em>존재 여부만</em> 확인해서, 재학습해도 항상 같은 9,727경기를 읽습니다.</td>
+  <td class="why">학습은 수동·오프라인 경로이고, 최근 몇백 경기가 피처 3개짜리 로지스틱 회귀를 의미 있게 바꾸지 않습니다.</td>
+  <td class="dec"><span class="yes">→ 결정 4</span></td>
+</tr>
+<tr>
+  <td><strong>예정 경기 목록이 킥오프 시각을 안 봄</strong><br><span class="lv">Codex / MEDIUM</span></td>
+  <td>캐시가 최대 6시간 묵으므로, 이미 시작한 경기가 목록에 "예정"으로 남을 수 있습니다.</td>
+  <td class="why">유일한 호출처인 일별 배치가 <code>0 &lt; 남은시간</code>을 <strong>두 군데서</strong> 이미 막습니다. 같은 검사를 세 번째로 넣는 대신 함수 설명을 정정했습니다.</td>
+  <td class="dec"><span class="none">없음</span></td>
+</tr>
+<tr>
+  <td><strong>번들에 배당률 모델이 없을 때의 불필요한 API 호출</strong><br><span class="lv">Codex / LOW</span></td>
+  <td>없음.</td>
+  <td class="why">실제 번들을 열어 확인했더니 배당률 모델이 항상 들어 있습니다. 일어나지 않는 상황에 방어 코드를 넣지 않았습니다.</td>
+  <td class="dec"><span class="none">없음</span></td>
+</tr>
+<tr>
+  <td><strong>폼 계산 효율</strong><br><span class="lv">Codex / LOW · 고쳤다가 되돌림</span></td>
+  <td>지적은 사실이었지만, 측정하니 1.1배·대시보드 전체 4ms였습니다.</td>
+  <td class="why">제가 주석에 쓴 "1/20로 줄어든다"는 근거가 실측과 맞지 않았습니다. 근거 없는 변경은 남기지 않는 게 맞다고 보고 변경 자체를 취소했습니다.</td>
+  <td class="dec"><span class="none">없음</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h2><span class="n">B</span> 선택이 필요한 것 — 5건</h2>
+<p class="lede">코드 버그가 아니라 <strong>운영 방침</strong>입니다. 제가 임의로 정하면 비용이나 서비스 성격이 바뀌기 때문에 판단을 남겨둔 것들입니다. 급한 순서로 놓았습니다.</p>
+
+<div class="card">
+  <div class="card-head">
+    <h3>결정 1 · 배당률 API 쿼터가 트래픽에 열려 있음</h3>
+    <span class="tag now">가장 급함</span>
+  </div>
+  <dl class="row">
+    <dt>현황</dt>
+    <dd>배당률은 무료 <strong>월 500회</strong>가 전부이고 대체 소스가 없습니다. <code>/predict</code>는 인증 없이 <strong>누구나</strong> 호출할 수 있고(<code>allUsers</code>), 호출될 때 캐시가 만료됐으면 API를 부릅니다. 캐시는 컨테이너 안에만 있어서 인스턴스가 새로 뜨면 사라집니다.</dd>
+    <dt>산수</dt>
+    <dd>
+      <div class="calc">인스턴스 1개 = 6시간마다 1회 → 최대 3개 상시 가동 시 <b>하루 12회 (월 360회)</b>
++ 일별 배치 <b>월 30회</b>  =  월 390회 / 500회
+여기에 <b>콜드스타트마다 1회</b>가 더 붙는다 — 하루 50번 깨어나면 그것만으로 월 1,500회</div>
+    </dd>
+    <dt>리스크</dt>
+    <dd>쿼터가 소진되면 예외가 나는 대신 폼 모델로 조용히 내려갑니다. 즉 <strong>장애로 안 보이고 예측 품질만 떨어집니다.</strong></dd>
+    <dt>선택지</dt>
+    <dd>
+      <ul class="opts">
+        <li class="pick" data-k="a.">배당률 캐시를 GCS 객체 하나로 공유 — 인스턴스 수·콜드스타트와 무관하게 <strong>하루 4회로 고정</strong>. 이미 쓰는 버킷이라 추가 비용은 사실상 0.</li>
+        <li data-k="b."><code>/predict</code>만 비공개로 돌리고 대시보드는 공개 유지 — 쿼터는 지켜지지만 "직접 조합해 보는" 기능이 사라집니다.</li>
+        <li data-k="c.">그대로 두고, 쿼터가 마르면 폼 모델로 떨어지는 걸 수용.</li>
+      </ul>
+    </dd>
+  </dl>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>결정 2 · 예측 기록 DB가 꺼진 상태</h3>
+    <span class="tag soon">정리 필요</span>
+  </div>
+  <dl class="row">
+    <dt>현황</dt>
+    <dd><code>db.py</code>는 죽은 코드가 아니라 <strong>실제로 호출되지만 연결이 안 되는</strong> 상태입니다. 서비스에 <code>DATABASE_URL</code>이 없어 시작할 때마다 <em>database unavailable at startup</em>을 남기고, 개별 <code>/predict</code> 요청은 기록되지 않습니다. 일별 배치 예측과 채점표는 GCS에 정상적으로 쌓입니다.</dd>
+    <dt>선택지</dt>
+    <dd>
+      <ul class="opts">
+        <li class="pick" data-k="a.">현 상태 유지 + 코드에 "의도적으로 비활성"임을 명시 — 지금 필요한 기록은 GCS로 충분합니다.</li>
+        <li data-k="b."><code>db.py</code>를 제거하고 GCS로 완전히 통일 — 더 정직하지만, 나중에 요청 단위 기록이 필요해지면 다시 만들어야 합니다.</li>
+        <li data-k="c.">Cloud SQL 연결 — 이 서비스에서 <strong>유일한 상시 과금 요소</strong>가 됩니다(최소 인스턴스도 무료 티어 없음).</li>
+      </ul>
+    </dd>
+  </dl>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>결정 3 · 학습·서비스 입력 불일치를 어떻게 다룰지</h3>
+    <span class="tag soon">품질</span>
+  </div>
+  <dl class="row">
+    <dt>현황</dt>
+    <dd>모델은 북메이커 1곳 기준으로 배웠고, 서비스는 21곳 평균을 넣습니다. 어느 방향으로 얼마나 틀어지는지는 데이터 없이 단정할 수 없습니다.</dd>
+    <dt>선택지</dt>
+    <dd>
+      <ul class="opts">
+        <li class="pick" data-k="a.">수용하고 <strong>채점표로 실측 추적</strong> — 이미 채점 기능이 있습니다. 표본이 쌓이기 전에 구조를 바꾸면 원인 추적이 불가능해집니다.</li>
+        <li data-k="b.">서빙을 단일 북메이커로 맞추기 — 과거 데이터와 <em>같은</em> 북메이커여야 의미가 있고, 그 한 곳이 값을 안 주면 예측이 빕니다.</li>
+        <li data-k="c.">다중 북메이커 과거 데이터 확보 — 유료입니다.</li>
+      </ul>
+    </dd>
+  </dl>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>결정 4 · 학습 데이터 갱신 주기</h3>
+    <span class="tag ok">낮음</span>
+  </div>
+  <dl class="row">
+    <dt>현황</dt>
+    <dd>재학습해도 항상 같은 9,727경기를 읽습니다(A표 2번 항목).</dd>
+    <dt>선택지</dt>
+    <dd>
+      <ul class="opts">
+        <li class="pick" data-k="a.">시즌 종료 후 <strong>수동 갱신</strong> — 캐시 파일을 지우고 재학습. 학습 자체가 수동 경로라 자동화 이득이 적습니다.</li>
+        <li data-k="b.">캐시에 TTL 도입 — 재학습할 때마다 큰 CSV를 다시 받습니다.</li>
+      </ul>
+    </dd>
+  </dl>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>결정 5 · 장애 알림이 없음</h3>
+    <span class="tag ok">낮음</span>
+  </div>
+  <dl class="row">
+    <dt>현황</dt>
+    <dd>runbook에 이미 적어둔 대로 자동 알림이 설정돼 있지 않습니다. 매일 도는 배치가 실패해도 <strong>사람이 대시보드를 열어봐야</strong> 압니다.</dd>
+    <dt>선택지</dt>
+    <dd>
+      <ul class="opts">
+        <li class="pick" data-k="a.">Uptime Check + 이메일 알림 — 무료 범위 안에서 됩니다. "배포해봤다"와 "운영해봤다"를 가르는 지점이기도 합니다.</li>
+        <li data-k="b.">현 상태 수용 — 학습 목적이라면 합리적인 선택입니다.</li>
+      </ul>
+    </dd>
+  </dl>
+</div>
+
+<p class="note"><strong>결정 불필요, 인지만:</strong> <code>/predict</code>는 요청마다 football-data.org 시즌 캐시 갱신도 시도합니다(6시간 TTL). 이쪽은 무료 티어에 분당 제한이 있어 동시 요청이 몰리면 거부될 수 있지만, 실패하면 기존 캐시로 계속 서빙하도록 처리돼 있습니다. 또한 인스턴스 최대 3개·동시요청 80로 제한돼 있어 트래픽이 급증해도 비용이 무한히 늘지는 않습니다.</p>
+
+<footer>
+  판단 근거는 모두 실제 데이터·로그·코드 확인에서 나왔습니다. 위 권고는 제 의견이고, 다르게 정하셔도 이유만 알려주시면 그대로 반영합니다.
+</footer>
+</div>

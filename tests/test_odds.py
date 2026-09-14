@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import odds as odds_module  # noqa: E402
@@ -317,3 +318,181 @@ def test_history_cache_is_refetched_once_it_falls_behind(tmp_path, monkeypatch):
 
     history.unlink()
     assert odds_module._history_needs_refresh() is True
+
+
+class FakeGcsObject:
+    """조건부 쓰기 판정에 필요한 만큼만 흉내낸 GCS 객체 하나. 실제 GCS는 객체를 쓸 때마다
+    새 generation 번호를 부여하고, "이 번호일 때만 써라/지워라"를 서버에서 판정해준다 —
+    분산 락이 성립하는 근거가 이 판정이므로 테스트도 같은 규칙으로 흉내낸다."""
+
+    def __init__(self):
+        self.content = None  # None이면 객체가 없는 상태
+        self.generation = None
+        self._next = 1
+
+    def write(self, data):
+        self.content = data
+        self.generation = self._next
+        self._next += 1
+
+    def clear(self):
+        self.content = None
+        self.generation = None
+
+
+class FakeBlob:
+    """GCS blob 핸들 대역. 실제로도 핸들은 호출마다 새로 만들어지고 generation은 핸들에
+    따로 담기므로, 객체 상태(FakeGcsObject)와 핸들 상태를 분리해 둔다."""
+
+    def __init__(self, obj):
+        self._obj = obj
+        self.generation = None
+
+    def upload_from_string(self, data, content_type=None, if_generation_match=None):
+        if if_generation_match == 0 and self._obj.content is not None:
+            raise PreconditionFailed("객체가 이미 있다")
+        if if_generation_match not in (None, 0) and if_generation_match != self._obj.generation:
+            raise PreconditionFailed("generation 불일치")
+        self._obj.write(data)
+        self.generation = self._obj.generation
+
+    def download_as_bytes(self):
+        if self._obj.content is None:
+            raise NotFound("객체가 없다")
+        return self._obj.content.encode()
+
+    def reload(self):
+        if self._obj.content is None:
+            raise NotFound("객체가 없다")
+        self.generation = self._obj.generation
+
+    def delete(self, if_generation_match=None):
+        if self._obj.content is None:
+            raise NotFound("객체가 없다")
+        if if_generation_match is not None and if_generation_match != self._obj.generation:
+            raise PreconditionFailed("generation 불일치")
+        self._obj.clear()
+
+
+class FakeStorage:
+    def __init__(self):
+        self.objects = {}
+
+    def bucket(self, name):
+        return self
+
+    def blob(self, path):
+        return FakeBlob(self.objects.setdefault(path, FakeGcsObject()))
+
+
+@pytest.fixture
+def fake_gcs(monkeypatch):
+    """분산 락이 실제로 동작하려면 버킷이 있어야 하므로, 가짜 GCS를 쥐어준다."""
+    monkeypatch.setenv("PREDICTIONS_BUCKET", "test-bucket")
+    storage = FakeStorage()
+    monkeypatch.setattr(odds_module, "_get_storage_client", lambda: storage)
+    return storage
+
+
+def lock_object(fake_gcs):
+    return fake_gcs.objects[odds_module.ODDS_FETCH_LOCK_OBJECT]
+
+
+def test_only_one_instance_gets_the_fetch_slot(fake_gcs):
+    """같은 순간에 둘이 들어오면 한쪽만 API를 부를 권한을 얻어야 한다. 이게 없으면 TTL이
+    만료된 직후 동시에 깨어난 인스턴스들이 각자 한 번씩 호출해 무료 쿼터를 낭비한다."""
+    first, generation = odds_module._acquire_fetch_slot()
+    second, _ = odds_module._acquire_fetch_slot()
+
+    assert first is True and generation is not None
+    assert second is False
+
+
+def test_releasing_the_slot_lets_the_next_instance_in(fake_gcs):
+    _, generation = odds_module._acquire_fetch_slot()
+    odds_module._release_fetch_slot(generation)
+
+    acquired, _ = odds_module._acquire_fetch_slot()
+    assert acquired is True
+
+
+def test_a_slot_left_behind_by_a_crashed_instance_is_reclaimed(fake_gcs):
+    """락을 쥔 인스턴스가 강제 종료되면 해제 코드가 돌지 못한다. TTL로 회수하지 않으면
+    그 뒤로 아무도 배당률을 갱신할 수 없게 되므로, 오래된 락은 빼앗을 수 있어야 한다."""
+    odds_module._acquire_fetch_slot()
+    long_ago = time.time() - odds_module.ODDS_FETCH_LOCK_TTL_SECONDS - 1
+    lock_object(fake_gcs).write(json.dumps({"acquired_at": long_ago}))
+
+    acquired, generation = odds_module._acquire_fetch_slot()
+    assert acquired is True and generation is not None
+
+
+def test_releasing_does_not_remove_a_slot_reclaimed_by_someone_else(fake_gcs):
+    """TTL이 지나 남이 회수해 간 락을 뒤늦게 깨어난 원래 주인이 지워버리면, 그 순간 락이
+    비어 또 다른 인스턴스가 들어와 중복 호출이 난다 — 해제는 내가 잡은 것에만 적용돼야 한다."""
+    _, mine = odds_module._acquire_fetch_slot()
+    long_ago = time.time() - odds_module.ODDS_FETCH_LOCK_TTL_SECONDS - 1
+    lock_object(fake_gcs).write(json.dumps({"acquired_at": long_ago}))
+    odds_module._acquire_fetch_slot()  # 남이 회수해 갔다
+
+    odds_module._release_fetch_slot(mine)
+
+    assert lock_object(fake_gcs).content is not None  # 남의 락은 그대로 남아있다
+
+
+def test_fetch_slot_is_skipped_without_a_bucket(monkeypatch):
+    """버킷이 없는 로컬 개발 환경에서는 락을 걸 곳이 없으므로, 락 없이 진행해야 한다 —
+    쿼터를 아끼려고 넣은 장치가 개발 환경에서 배당률 조회를 막으면 안 된다."""
+    monkeypatch.setattr(odds_module, "_get_storage_client",
+                        lambda: pytest.fail("버킷 설정이 없는데 GCS 클라이언트를 만들었다"))
+
+    acquired, generation = odds_module._acquire_fetch_slot()
+    assert acquired is True and generation is None
+    odds_module._release_fetch_slot(generation)  # 조용히 넘어가야 한다
+
+
+def test_a_waiting_instance_does_not_call_the_api_itself(tmp_path, monkeypatch):
+    """락을 못 얻은 쪽은 API를 부르지 않고, 락을 쥔 쪽이 공유 캐시에 남긴 결과를 읽어야 한다."""
+    monkeypatch.setattr(odds_module, "_acquire_fetch_slot", lambda: (False, None))
+    monkeypatch.setattr(odds_module, "_await_fetch_by_other", lambda before: cache_state(RECORDS))
+    monkeypatch.setattr(odds_module, "_fetch_live_odds_from_api",
+                        lambda api_key: pytest.fail("다른 인스턴스가 받는 중인데 API를 불렀다"))
+
+    result = odds_module.fetch_upcoming_odds(api_key="k")
+    assert result[("A", "B")]["stale"] is False
+
+
+def test_a_waiting_instance_uses_stale_odds_when_the_other_fetch_failed(tmp_path, monkeypatch):
+    """락을 쥔 쪽이 실패했더라도 내가 대신 다시 부르지는 않는다 — 그러면 대기 인스턴스 수만큼
+    죽은 API를 때리게 되고, 락을 넣은 이유가 사라진다. 오래된 값이라도 표시해서 쓴다."""
+    stale = cache_state(RECORDS, fetched_at=time.time() - odds_module.LIVE_CACHE_TTL_SECONDS - 1)
+    odds_module._write_local_cache(stale)
+    monkeypatch.setattr(odds_module, "_acquire_fetch_slot", lambda: (False, None))
+    monkeypatch.setattr(odds_module, "_await_fetch_by_other", lambda before: None)
+    monkeypatch.setattr(odds_module, "_fetch_live_odds_from_api",
+                        lambda api_key: pytest.fail("대기 실패 후에도 API를 불렀다"))
+
+    result = odds_module.fetch_upcoming_odds(api_key="k")
+    assert result[("A", "B")]["stale"] is True
+
+
+def test_waiting_ends_as_soon_as_the_other_instance_records_a_failure(monkeypatch):
+    """기다림을 "값이 신선해졌는가"로 판정하면, 락을 쥔 쪽이 실패했을 때 캐시가 영원히 오래된
+    상태이므로 끝까지 기다리게 된다. 실패 기록이 남은 것도 "저쪽이 끝났다"로 봐야 한다."""
+    monkeypatch.setattr(odds_module, "ODDS_FETCH_POLL_SECONDS", 0.01)
+    before = cache_state(RECORDS, fetched_at=time.time() - odds_module.LIVE_CACHE_TTL_SECONDS - 1)
+    after = dict(before, failed_at=time.time())
+    monkeypatch.setattr(odds_module, "_read_shared_cache", lambda: after)
+
+    assert odds_module._await_fetch_by_other(before) is after
+
+
+def test_waiting_gives_up_instead_of_hanging(monkeypatch):
+    """락을 쥔 인스턴스가 응답 없이 사라지면 무한정 기다릴 수 없다 — 요청이 타임아웃될 때까지
+    묶여 있는 대신 한도 안에서 포기하고, 호출자가 오래된 값으로 내려가게 한다."""
+    monkeypatch.setattr(odds_module, "ODDS_FETCH_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(odds_module, "ODDS_FETCH_WAIT_SECONDS", 0.05)
+    before = cache_state(RECORDS)
+    monkeypatch.setattr(odds_module, "_read_shared_cache", lambda: before)
+
+    assert odds_module._await_fetch_by_other(before) is None

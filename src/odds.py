@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +37,16 @@ ODDS_LIVE_CACHE_PATH = RAW_DIR / "odds_live_cache.json"
 # 이 서비스가 쓰는 버킷은 하나뿐이고, 새 환경 변수를 늘리면 배포마다 설정이 하나 더 틀릴
 # 여지가 생긴다. 환경 변수가 없으면(로컬 개발) 공유 캐시 없이 로컬 캐시만으로 동작한다.
 ODDS_SHARED_CACHE_OBJECT = "cache/odds_live.json"
+# 같은 순간에 두 인스턴스가 각자 API를 부르는 것을 막는 분산 락. 이 객체의 존재 자체가
+# "지금 누군가 받고 있다"는 표시이고, 내용에는 잡은 시각만 들어간다.
+ODDS_FETCH_LOCK_OBJECT = "cache/odds_fetch.lock"
+# 락을 쥔 인스턴스가 죽었다고 보고 회수하는 기준. API 호출 타임아웃(20초)보다 넉넉히 길어야
+# 정상적으로 받고 있는 인스턴스의 락을 남이 빼앗지 않는다.
+ODDS_FETCH_LOCK_TTL_SECONDS = 60
+# 락을 못 얻은 인스턴스가 남의 결과를 기다리는 한도. API 타임아웃(20초)까지는 기다려줘야
+# "기다렸는데 못 받았다"가 실제 실패와 같은 뜻이 된다.
+ODDS_FETCH_WAIT_SECONDS = 25
+ODDS_FETCH_POLL_SECONDS = 1.0
 HISTORY_MAX_STALENESS_DAYS = 30  # 과거 배당률 캐시의 마지막 경기가 이보다 뒤처지면 다시 받는다
 LIVE_CACHE_TTL_SECONDS = 6 * 3600  # fetch_data.py의 CACHE_TTL_SECONDS와 동일 — 무료 티어(월 500회) 보호
 FAILURE_BACKOFF_SECONDS = 15 * 60  # API 호출이 실패한 뒤 이 시간 동안은 다시 부르지 않는다
@@ -302,6 +313,90 @@ def _last_failure_at(*states: dict | None) -> float:
     return max((t for t in times if type(t) in (int, float)), default=0.0)
 
 
+def _acquire_fetch_slot() -> tuple[bool, int | None]:
+    """API를 부를 권한을 얻는다. (얻었는가, 락 식별자)를 돌려준다.
+
+    인스턴스 사이의 상호배제를 GCS 객체 하나로 구현한다. 업로드에 "이 객체가 아직 없을
+    때만 써라"(if_generation_match=0)라는 조건을 붙이면, 동시에 여러 인스턴스가 시도해도
+    정확히 하나만 성공한다 — 이게 동시성 제어에 필요한 원자적 비교·교환 연산이고, GCS가
+    서버 쪽에서 보장해준다. 나머지는 조건 위반(412)을 받고 대기로 넘어간다.
+    (같은 패턴의 다른 클라우드 대응물: S3는 If-None-Match, Azure Blob은 임대(lease).)
+
+    락을 쥔 채 인스턴스가 강제 종료되면 객체가 남아 모두가 영구히 대기하게 되므로, 잡은
+    시각을 내용에 적어두고 TTL이 지난 락은 회수한다. 회수도 "내가 본 그 버전일 때만
+    지워라"(if_generation_match)로 걸어, 두 인스턴스가 같은 낡은 락을 동시에 회수하려
+    해도 한쪽만 성공하게 한다.
+
+    락 조작 자체가 실패하면(권한 없음, 네트워크 오류, 버킷 미설정 등) 락 없이 진행한다 —
+    쿼터를 아끼려고 넣은 장치가 배당률 경로를 통째로 막으면 안 된다. 이때 돌려주는 식별자는
+    None이고, 해제 시 아무것도 하지 않는다."""
+    bucket_name = os.environ.get("PREDICTIONS_BUCKET")
+    if not bucket_name:
+        return True, None
+
+    payload = json.dumps({"acquired_at": time.time()})
+    try:
+        blob = _get_storage_client().bucket(bucket_name).blob(ODDS_FETCH_LOCK_OBJECT)
+        blob.upload_from_string(payload, content_type="application/json", if_generation_match=0)
+        return True, blob.generation
+    except PreconditionFailed:
+        pass  # 이미 누군가 쥐고 있다 — 아래에서 낡은 락인지 확인한다
+    except Exception:
+        return True, None
+
+    try:
+        blob.reload()  # 남이 쥔 락의 generation을 알아야 조건부로 회수할 수 있다
+        held_for = time.time() - json.loads(blob.download_as_bytes())["acquired_at"]
+    except Exception:
+        # 방금 해제됐거나 내용이 깨졌다. 어느 쪽이든 여기서 재시도하지 않고 대기로 넘긴다 —
+        # 대기 쪽은 공유 캐시가 갱신되지 않으면 시간 안에 빠져나온다.
+        return False, None
+    if held_for < ODDS_FETCH_LOCK_TTL_SECONDS:
+        return False, None
+
+    try:
+        blob.delete(if_generation_match=blob.generation)
+        blob.upload_from_string(payload, content_type="application/json", if_generation_match=0)
+        return True, blob.generation
+    except Exception:
+        return False, None  # 다른 인스턴스가 먼저 회수해 갔다
+
+
+def _release_fetch_slot(generation: int | None) -> None:
+    """내가 잡은 락만 해제한다. 조건 없이 지우면, TTL이 지나 남이 회수해 다시 잡은 락을
+    내가 지워버릴 수 있다(그 순간 또 다른 인스턴스가 들어와 중복 호출이 난다)."""
+    if generation is None:
+        return
+    bucket_name = os.environ.get("PREDICTIONS_BUCKET")
+    if not bucket_name:
+        return
+    try:
+        blob = _get_storage_client().bucket(bucket_name).blob(ODDS_FETCH_LOCK_OBJECT)
+        blob.delete(if_generation_match=generation)
+    except Exception:
+        # 해제에 실패해도 TTL이 지나면 회수되므로 교착으로 남지는 않는다.
+        pass
+
+
+def _await_fetch_by_other(before: dict | None) -> dict | None:
+    """락을 쥔 다른 인스턴스가 공유 캐시를 갱신할 때까지 기다렸다가 그 결과를 돌려준다.
+
+    "값이 신선해졌는가"로 판단하면 안 된다 — 락을 쥔 쪽의 호출이 실패하면 캐시는 계속
+    오래된 상태이므로 끝까지 기다리게 된다. 기다리기 전에 본 상태와 비교해서 받아온 시각이나
+    실패 시각 중 하나라도 바뀌었으면, 저쪽이 끝난 것이다."""
+    baseline_fetched = before["fetched_at"] if before is not None else 0.0
+    baseline_failed = _last_failure_at(before)
+    deadline = time.time() + ODDS_FETCH_WAIT_SECONDS
+    while time.time() < deadline:
+        time.sleep(ODDS_FETCH_POLL_SECONDS)
+        shared = _read_shared_cache()
+        if shared is None:
+            continue
+        if shared["fetched_at"] > baseline_fetched or _last_failure_at(shared) > baseline_failed:
+            return shared
+    return None
+
+
 def _to_odds_map(records: list[dict], stale: bool) -> dict[tuple[str, str], dict]:
     """레코드 리스트를 (home_team, away_team) 키 dict로 바꾸면서 stale 여부를 얹는다.
     stale=True는 "TTL 지난 캐시를 API 장애로 어쩔 수 없이 재사용했다"는 뜻 — 호출자가
@@ -343,10 +438,9 @@ def fetch_upcoming_odds(api_key: str | None = None) -> dict[tuple[str, str], dic
     따라 정해지므로 상한이 없었다. 공유 캐시를 먼저 확인하면 새 인스턴스는 API가 아니라 GCS를
     읽으므로, 총 호출량이 인스턴스 수·콜드 스타트와 무관하게 TTL로만 정해진다(하루 약 4회).
 
-    한 가지 남는 틈: TTL이 만료된 순간에 두 인스턴스가 동시에 들어오면 둘 다 공유 캐시를
-    만료로 보고 각자 API를 부를 수 있다(창은 API 호출 1회 시간, 약 1초). 이걸 막으려면 GCS
-    조건부 쓰기로 분산 락을 걸어야 하는데, 개인 서비스 수준의 트래픽에서 그 1초에 두 요청이
-    겹칠 확률과 쿼터 여유(월 500회 중 약 150회 사용)를 보면 락의 복잡도가 더 비싸다.
+    TTL이 만료된 순간에 여러 인스턴스가 동시에 들어와도 API를 부르는 것은 한 곳뿐이다 —
+    호출 직전에 GCS 조건부 쓰기로 분산 락을 잡고, 잡지 못한 쪽은 API를 부르지 않고 저쪽의
+    결과를 기다려 공유 캐시에서 읽는다(_acquire_fetch_slot 참고).
     """
     local = _read_local_cache()
     if local is not None and _cache_age(local) < LIVE_CACHE_TTL_SECONDS:
@@ -380,29 +474,48 @@ def fetch_upcoming_odds(api_key: str | None = None) -> dict[tuple[str, str], dic
                 return _to_odds_map(cached, stale=True)
             raise RuntimeError("배당률 API 호출이 최근 실패해 backoff 중입니다")
 
-        try:
-            api_key = api_key or load_odds_api_key()
-            results = _fetch_live_odds_from_api(api_key)
-        except Exception:
-            # 실패 사실을 공유 캐시에도 남긴다. 프로세스 변수로만 기억하면 인스턴스가 새로
-            # 뜰 때마다 backoff가 초기화돼, 쿼터가 소진된 상태에서 15분마다 한 번이 아니라
-            # 인스턴스마다 15분마다 한 번씩 재시도하게 된다. '받아온 시각'과 레코드는 그대로
-            # 유지해서 실패 기록이 기존 캐시의 신선도를 건드리지 않게 한다.
-            failed = {
-                "fetched_at": state["fetched_at"] if state is not None else 0.0,
-                "records": cached,
-                "failed_at": time.time(),
-            }
-            _write_local_cache(failed)
-            _write_shared_cache(failed)
-            if cached:
-                # API 장애/쿼터 소진 시 새로 호출을 반복하는 대신 오래된 캐시라도 쓴다
-                # — 매 요청마다 재시도해서 쿼터를 더 태우는 것보다 낫다. 다만 이 숫자는
-                # TTL이 지난 걸 알고 쓰는 거라 stale=True로 표시해 호출자가 구분하게 한다.
-                return _to_odds_map(cached, stale=True)
-            raise
+        # 여기서부터가 실제 API 호출 구간이다. 인스턴스 전체에서 한 번에 하나만 통과시킨다.
+        acquired, lock_generation = _acquire_fetch_slot()
+        if not acquired:
+            updated = _await_fetch_by_other(state)
+            if updated is not None and _cache_age(updated) < LIVE_CACHE_TTL_SECONDS:
+                _write_local_cache(updated)
+                return _to_odds_map(updated["records"], stale=False)
+            # 저쪽이 실패했거나 기다리다 시간이 다 됐다. 어느 쪽이든 내가 다시 부르지는
+            # 않는다 — 그게 이 락을 넣은 이유다. 가진 값이 있으면 오래된 채로 쓴다.
+            records = (updated or state or {}).get("records") or cached
+            if records:
+                return _to_odds_map(records, stale=True)
+            raise RuntimeError("다른 인스턴스가 배당률을 받는 중이라 아직 쓸 수 있는 배당률이 없습니다")
 
-        fresh = {"fetched_at": time.time(), "records": results, "failed_at": None}
-        _write_local_cache(fresh)
-        _write_shared_cache(fresh)
-        return _to_odds_map(results, stale=False)
+        try:
+            try:
+                api_key = api_key or load_odds_api_key()
+                results = _fetch_live_odds_from_api(api_key)
+            except Exception:
+                # 실패 사실을 공유 캐시에도 남긴다. 프로세스 변수로만 기억하면 인스턴스가 새로
+                # 뜰 때마다 backoff가 초기화돼, 쿼터가 소진된 상태에서 15분마다 한 번이 아니라
+                # 인스턴스마다 15분마다 한 번씩 재시도하게 된다. '받아온 시각'과 레코드는 그대로
+                # 유지해서 실패 기록이 기존 캐시의 신선도를 건드리지 않게 한다.
+                failed = {
+                    "fetched_at": state["fetched_at"] if state is not None else 0.0,
+                    "records": cached,
+                    "failed_at": time.time(),
+                }
+                _write_local_cache(failed)
+                _write_shared_cache(failed)
+                if cached:
+                    # API 장애/쿼터 소진 시 새로 호출을 반복하는 대신 오래된 캐시라도 쓴다
+                    # — 매 요청마다 재시도해서 쿼터를 더 태우는 것보다 낫다. 다만 이 숫자는
+                    # TTL이 지난 걸 알고 쓰는 거라 stale=True로 표시해 호출자가 구분하게 한다.
+                    return _to_odds_map(cached, stale=True)
+                raise
+
+            fresh = {"fetched_at": time.time(), "records": results, "failed_at": None}
+            _write_local_cache(fresh)
+            _write_shared_cache(fresh)
+            return _to_odds_map(results, stale=False)
+        finally:
+            # 공유 캐시를 먼저 쓰고 나서 해제한다 — 순서가 뒤바뀌면 기다리던 인스턴스가
+            # 락이 풀린 것만 보고 아직 갱신 안 된 캐시를 읽어 다시 API를 부를 수 있다.
+            _release_fetch_slot(lock_generation)

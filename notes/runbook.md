@@ -132,6 +132,20 @@ gcloud logging read \
   --format="table(timestamp, jsonPayload.message, jsonPayload.error)"
 ```
 
+**배당률 캐시와 호출 락 확인:**
+```bash
+gcloud storage ls gs://epl-predictor-daily-genai-backend/cache/
+```
+`odds_live.json`은 인스턴스 전체가 공유하는 배당률 캐시다(6시간 TTL). 무료 티어가 월
+500회뿐이라, 인스턴스가 새로 뜰 때마다 각자 호출하지 않도록 이 파일을 먼저 본다.
+
+`odds_fetch.lock`은 "지금 누군가 API를 받고 있다"는 표시로, 정상이라면 1초쯤 존재하다
+사라진다. 계속 남아있으면 락을 쥔 인스턴스가 비정상 종료된 것 — 60초가 지나면 다음
+요청이 자동으로 회수하므로 손댈 필요는 없다. 그래도 즉시 풀고 싶으면 지우면 된다:
+```bash
+gcloud storage rm gs://epl-predictor-daily-genai-backend/cache/odds_fetch.lock
+```
+
 **스케줄러 자체가 Job을 트리거했는지(403/401 등 인증 오류) 확인:**
 ```bash
 gcloud logging read 'logName:"cloudscheduler.googleapis.com"' \
